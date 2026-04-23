@@ -29,38 +29,71 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # ─────────────────────────────────────────
 def compute_addiction_score(df):
     """
-    DSM-5 benzeri davranış bağımlılığı kriterleri:
-    - Tolerans (aşırı kullanım)
-    - Yoksunluk (psikolojik sıkıntı)
-    - İşlevsellik kaybı (uyku, ruh hali)
-    - Non-lineer etkileşimler
+    DSM-5 esinli + davranışsal faktörlerle zenginleştirilmiş skor.
+    Tüm feature'lar ağırlıklı olarak katkı sağlar.
     """
-    def norm(series, max_val):
-        return np.clip(series / max_val, 0, 1)
+    def norm(series, max_val, invert=False):
+        v = np.clip(series / max_val, 0, 1)
+        return 1 - v if invert else v
 
-    # Her boyutu kendi ölçeğine göre 0-1 arasına getir
+    # ── ANA SİNYALLER (klinik) ──
     screen = norm(df['Daily_Screen_Time_Hours'], 10)
     night  = norm(df['Late_Night_Usage'], 5)
-    gad    = norm(df['GAD_7_Score'], 21)    # klinik GAD-7 tam skala
-    phq    = norm(df['PHQ_9_Score'], 27)    # klinik PHQ-9 tam skala
+    gad    = norm(df['GAD_7_Score'], 21)
+    phq    = norm(df['PHQ_9_Score'], 27)
 
-    # Non-lineer etkileşimler — bağımlılık "birleşik" olarak ortaya çıkar
-    compound_risk = screen * (gad + phq) / 2    # yüksek ekran + kötü ruh hali
-    sleep_risk    = night * gad                  # gece kullanımı + anksiyete
+    # ── YAN SİNYALLER (davranışsal) ──
+    sleep_risk = norm(df['Sleep_Duration_Hours'], 10, invert=True)   # az uyku → yüksek risk
+    age_risk   = np.clip(1 - (df['Age'] - 13) / 25, 0, 1)            # gençlerde risk daha yüksek
 
+    # ── KATEGORİK RISK MAPPİNGLER (veri setine göre) ──
+    archetype_risk = df['User_Archetype'].map({
+        'Hyper-Connected':    1.0,   # en riskli
+        'Passive Scroller':   0.7,
+        'Average User':       0.5,
+        'Digital Minimalist': 0.1,   # en sağlıklı
+    }).fillna(0.5)
+
+    content_risk = df['Dominant_Content_Type'].map({
+        'Entertainment/Comedy': 0.85,  # dopamin yoğun, bağımlılık yapıcı
+        'Lifestyle/Fashion':    0.75,  # sosyal karşılaştırmayı tetikler
+        'Gaming':               0.70,
+        'News/Politics':        0.55,  # duygusal yüklü, ama bilgi odaklı
+        'Self-Help/Motivation': 0.35,  # potansiyel pozitif
+        'Educational/Tech':     0.20,  # en az riskli
+    }).fillna(0.5)
+
+    activity_risk = df['Activity_Type'].map({
+        'Passive': 0.8,   # sadece scroll → daha bağımlılık yapıcı
+        'Active':  0.3,   # paylaşan/üreten → daha az
+    }).fillna(0.5)
+
+    # Binary: 1 = karşılaştırma tetikleniyor, 0 = tetiklenmiyor
+    comparison_risk = df['Social_Comparison_Trigger'].astype(float).clip(0, 1)
+
+    # ── NON-LİNEER ETKİLEŞİMLER ──
+    compound_risk = screen * (gad + phq) / 2             # ekran + ruh hali
+    sleep_mental  = sleep_risk * (gad + phq) / 2         # uykusuzluk + ruh hali
+
+    # ── AĞIRLIKLI TOPLAM (toplam = 1.0) ──
     raw = (
-        screen        * 0.25 +
-        night         * 0.15 +
-        gad           * 0.20 +
-        phq           * 0.15 +
-        compound_risk * 0.15 +
-        sleep_risk    * 0.10
+        screen          * 0.18 +
+        night           * 0.10 +
+        gad             * 0.14 +
+        phq             * 0.10 +
+        sleep_risk      * 0.08 +
+        age_risk        * 0.05 +
+        archetype_risk  * 0.08 +
+        content_risk    * 0.05 +
+        activity_risk   * 0.05 +
+        comparison_risk * 0.07 +
+        compound_risk   * 0.05 +
+        sleep_mental    * 0.05
     )
 
-    # Küçük gürültü → mükemmel formülü bozar, modelin genellemesini zorlar
+    # Gerçekçi gürültü
     noise = np.random.RandomState(42).normal(0, 0.03, len(raw))
     raw = np.clip(raw + noise, 0, 1)
-
     return raw
 
 # ─────────────────────────────────────────
