@@ -80,7 +80,7 @@ def generate_synthetic_data(n=600):
 # ─────────────────────────────────────────
 # 2. VERİ YÜKLEME & ÖN İŞLEME
 # ─────────────────────────────────────────
-def load_and_preprocess(csv_path='social_media_usage.csv'):
+def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/social-media-and-mental-health/social_media_mental_health.csv'):
     if not os.path.exists(csv_path):
         print("📊 CSV bulunamadı, sentetik veri üretiliyor...")
         df = generate_synthetic_data()
