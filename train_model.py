@@ -13,6 +13,7 @@ import pickle
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.utils.class_weight import compute_class_weight
 import tensorflow as tf
 from tensorflow.keras import layers, callbacks
 import matplotlib
@@ -238,6 +239,13 @@ def build_model(input_dim, num_classes=5):
 # 4. EĞİTİM
 # ─────────────────────────────────────────
 def train(model, X_train, y_train, epochs=80):
+    # Class weight hesapla — dengesizlik varsa az olan sınıflara daha fazla önem ver
+    class_weights = compute_class_weight(
+        'balanced', classes=np.unique(y_train), y=y_train
+    )
+    class_weight_dict = dict(enumerate(class_weights))
+    print(f"\n📊 Class weights: {class_weight_dict}")
+
     cb_list = [
         callbacks.EarlyStopping(
             monitor='val_loss', patience=12,
@@ -259,9 +267,9 @@ def train(model, X_train, y_train, epochs=80):
         epochs=epochs,
         batch_size=32,
         callbacks=cb_list,
+        class_weight=class_weight_dict,   # ← yeni
         verbose=1
     )
-    
     return history
 
 
