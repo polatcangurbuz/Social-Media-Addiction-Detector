@@ -29,8 +29,8 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # ─────────────────────────────────────────
 def compute_addiction_score(df):
     """
-    DSM-5 esinli + davranışsal faktörlerle zenginleştirilmiş skor.
-    Tüm feature'lar ağırlıklı olarak katkı sağlar.
+    DSM-5 + gelişimsel psikoloji esaslı bağımlılık skoru.
+    Yaş non-lineer: 10-18 peak, 18-35 yumuşak düşüş, 35+ düşük plato.
     """
     def norm(series, max_val, invert=False):
         v = np.clip(series / max_val, 0, 1)
@@ -43,52 +43,63 @@ def compute_addiction_score(df):
     phq    = norm(df['PHQ_9_Score'], 27)
 
     # ── YAN SİNYALLER (davranışsal) ──
-    sleep_risk = norm(df['Sleep_Duration_Hours'], 10, invert=True)   # az uyku → yüksek risk
-    age_risk   = np.clip(1 - (df['Age'] - 13) / 25, 0, 1)            # gençlerde risk daha yüksek
+    sleep_risk = norm(df['Sleep_Duration_Hours'], 10, invert=True)
 
-    # ── KATEGORİK RISK MAPPİNGLER (veri setine göre) ──
+    # ── YAŞ RISK (gelişimsel — non-lineer) ──
+    age = df['Age'].values
+    age_risk = np.where(
+        age <= 18, 1.0,
+        np.where(
+            age <= 35, 1.0 - (age - 18) * 0.035,
+            np.maximum(0.2, 0.6 - (age - 35) * 0.015)
+        )
+    )
+    age_risk = pd.Series(age_risk, index=df.index)
+
+    # ── KATEGORİK RISK MAPPİNGLER ──
     archetype_risk = df['User_Archetype'].map({
-        'Hyper-Connected':    1.0,   # en riskli
+        'Hyper-Connected':    1.0,
         'Passive Scroller':   0.7,
         'Average User':       0.5,
-        'Digital Minimalist': 0.1,   # en sağlıklı
+        'Digital Minimalist': 0.1,
     }).fillna(0.5)
 
     content_risk = df['Dominant_Content_Type'].map({
-        'Entertainment/Comedy': 0.85,  # dopamin yoğun, bağımlılık yapıcı
-        'Lifestyle/Fashion':    0.75,  # sosyal karşılaştırmayı tetikler
+        'Entertainment/Comedy': 0.85,
+        'Lifestyle/Fashion':    0.75,
         'Gaming':               0.70,
-        'News/Politics':        0.55,  # duygusal yüklü, ama bilgi odaklı
-        'Self-Help/Motivation': 0.35,  # potansiyel pozitif
-        'Educational/Tech':     0.20,  # en az riskli
+        'News/Politics':        0.55,
+        'Self-Help/Motivation': 0.35,
+        'Educational/Tech':     0.20,
     }).fillna(0.5)
 
     activity_risk = df['Activity_Type'].map({
-        'Passive': 0.8,   # sadece scroll → daha bağımlılık yapıcı
-        'Active':  0.3,   # paylaşan/üreten → daha az
+        'Passive': 0.8,
+        'Active':  0.3,
     }).fillna(0.5)
 
-    # Binary: 1 = karşılaştırma tetikleniyor, 0 = tetiklenmiyor
     comparison_risk = df['Social_Comparison_Trigger'].astype(float).clip(0, 1)
 
     # ── NON-LİNEER ETKİLEŞİMLER ──
-    compound_risk = screen * (gad + phq) / 2             # ekran + ruh hali
-    sleep_mental  = sleep_risk * (gad + phq) / 2         # uykusuzluk + ruh hali
+    compound_risk     = screen * (gad + phq) / 2
+    sleep_mental      = sleep_risk * (gad + phq) / 2
+    young_screen_risk = age_risk * screen       # YENİ: genç + ekran
 
-    # ── AĞIRLIKLI TOPLAM (toplam = 1.0) ──
+    # ── AĞIRLIKLI TOPLAM ──
     raw = (
-        screen          * 0.18 +
-        night           * 0.10 +
-        gad             * 0.14 +
-        phq             * 0.10 +
-        sleep_risk      * 0.08 +
-        age_risk        * 0.05 +
-        archetype_risk  * 0.08 +
-        content_risk    * 0.05 +
-        activity_risk   * 0.05 +
-        comparison_risk * 0.07 +
-        compound_risk   * 0.05 +
-        sleep_mental    * 0.05
+        screen            * 0.15 +
+        night             * 0.10 +
+        gad               * 0.13 +
+        phq               * 0.10 +
+        sleep_risk        * 0.07 +
+        age_risk          * 0.10 +   # ← yaş önemli
+        archetype_risk    * 0.08 +
+        content_risk      * 0.05 +
+        activity_risk     * 0.05 +
+        comparison_risk   * 0.07 +
+        compound_risk     * 0.04 +
+        sleep_mental      * 0.03 +
+        young_screen_risk * 0.03     # ← yeni
     )
 
     # Gerçekçi gürültü
