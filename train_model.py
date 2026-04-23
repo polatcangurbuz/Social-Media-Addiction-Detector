@@ -24,6 +24,45 @@ OUTPUT_DIR = '/kaggle/working' if os.path.exists('/kaggle/working') else '.'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ─────────────────────────────────────────
+# Klinik Tabanlı Bağımlılık Skoru
+# ─────────────────────────────────────────
+def compute_addiction_score(df):
+    """
+    DSM-5 benzeri davranış bağımlılığı kriterleri:
+    - Tolerans (aşırı kullanım)
+    - Yoksunluk (psikolojik sıkıntı)
+    - İşlevsellik kaybı (uyku, ruh hali)
+    - Non-lineer etkileşimler
+    """
+    def norm(series, max_val):
+        return np.clip(series / max_val, 0, 1)
+
+    # Her boyutu kendi ölçeğine göre 0-1 arasına getir
+    screen = norm(df['Daily_Screen_Time_Hours'], 10)
+    night  = norm(df['Late_Night_Usage'], 5)
+    gad    = norm(df['GAD_7_Score'], 21)    # klinik GAD-7 tam skala
+    phq    = norm(df['PHQ_9_Score'], 27)    # klinik PHQ-9 tam skala
+
+    # Non-lineer etkileşimler — bağımlılık "birleşik" olarak ortaya çıkar
+    compound_risk = screen * (gad + phq) / 2    # yüksek ekran + kötü ruh hali
+    sleep_risk    = night * gad                  # gece kullanımı + anksiyete
+
+    raw = (
+        screen        * 0.25 +
+        night         * 0.15 +
+        gad           * 0.20 +
+        phq           * 0.15 +
+        compound_risk * 0.15 +
+        sleep_risk    * 0.10
+    )
+
+    # Küçük gürültü → mükemmel formülü bozar, modelin genellemesini zorlar
+    noise = np.random.RandomState(42).normal(0, 0.03, len(raw))
+    raw = np.clip(raw + noise, 0, 1)
+
+    return raw
+
+# ─────────────────────────────────────────
 # 1. SENTETİK VERİ ÜRET (Kaggle'da yoksa)
 # ─────────────────────────────────────────
 def generate_synthetic_data(n=600):
@@ -94,12 +133,7 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     # ─────────────────────────────────────────
     # 🧠 1. ADDICTION SCORE OLUŞTUR
     # ─────────────────────────────────────────
-    df['addiction_score_raw'] = (
-        df['Daily_Screen_Time_Hours'] * 0.4 +
-        df['Late_Night_Usage'] * 0.2 +
-        df['GAD_7_Score'] * 0.2 +
-        df['PHQ_9_Score'] * 0.2
-    )
+    df['addiction_score_raw'] = compute_addiction_score(df)
 
     df['addiction_score'] = pd.qcut(
         df['addiction_score_raw'], 5, labels=[1,2,3,4,5]
