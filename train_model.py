@@ -205,29 +205,35 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
 # ─────────────────────────────────────────
 def build_model(input_dim, num_classes=5):
     """
-    Dense sinir ağı — Batch Normalization + Dropout ile
+    Küçültülmüş + L2 regularize edilmiş model.
+    Bu veri boyutu için daha uygun bir kapasite.
     """
     inputs = tf.keras.Input(shape=(input_dim,), name='input')
     
-    x = layers.Dense(128, name='dense_1')(inputs)
+    x = layers.Dense(
+        64,
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+        name='dense_1'
+    )(inputs)
     x = layers.BatchNormalization(name='bn_1')(x)
     x = layers.Activation('relu')(x)
-    x = layers.Dropout(0.3, name='drop_1')(x)
+    x = layers.Dropout(0.4, name='drop_1')(x)   # 0.3 → 0.4
     
-    x = layers.Dense(64, name='dense_2')(x)
+    x = layers.Dense(
+        32,
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+        name='dense_2'
+    )(x)
     x = layers.BatchNormalization(name='bn_2')(x)
     x = layers.Activation('relu')(x)
     x = layers.Dropout(0.3, name='drop_2')(x)
-    
-    x = layers.Dense(32, activation='relu', name='dense_3')(x)
-    x = layers.Dropout(0.2, name='drop_3')(x)
     
     outputs = layers.Dense(num_classes, activation='softmax', name='output')(x)
     
     model = tf.keras.Model(inputs, outputs, name='SocialMediaAddictionDetector')
     
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=5e-4),  # 1e-3 → 5e-4
         loss='sparse_categorical_crossentropy',
         metrics=['accuracy']
     )
