@@ -20,6 +20,9 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+OUTPUT_DIR = '/kaggle/working' if os.path.exists('/kaggle/working') else '.'
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
 # ─────────────────────────────────────────
 # 1. SENTETİK VERİ ÜRET (Kaggle'da yoksa)
 # ─────────────────────────────────────────
@@ -153,14 +156,9 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     # ─────────────────────────────────────────
     # 💾 7. KAYDET
     # ─────────────────────────────────────────
-    with open('scaler.pkl', 'wb') as f:
-        pickle.dump(scaler, f)
-
-    with open('label_encoders.pkl', 'wb') as f:
-        pickle.dump(label_encoders, f)
-
-    with open('feature_cols.json', 'w') as f:
-        json.dump(feature_cols, f)
+    with open(f'{OUTPUT_DIR}/scaler.pkl', 'wb') as f: pickle.dump(scaler, f)
+    with open(f'{OUTPUT_DIR}/label_encoders.pkl', 'wb') as f: pickle.dump(label_encoders, f)
+    with open(f'{OUTPUT_DIR}/feature_cols.json', 'w') as f: json.dump(feature_cols, f)
 
     return X_train, X_test, y_train, y_test, X.shape[1]
 
@@ -214,7 +212,7 @@ def train(model, X_train, y_train, epochs=80):
             patience=6, min_lr=1e-5, verbose=1
         ),
         callbacks.ModelCheckpoint(
-            'best_model.keras', monitor='val_accuracy',
+            f'{OUTPUT_DIR}/best_model.keras', monitor='val_accuracy',
             save_best_only=True, verbose=0
         )
     ]
@@ -294,7 +292,7 @@ def evaluate_and_plot(model, history, X_test, y_test):
     plt.suptitle('Sosyal Medya Bağımlılık Dedektörü — Eğitim Sonuçları',
                  color='white', fontsize=15, y=1.02)
     plt.tight_layout()
-    plt.savefig('training_results.png', dpi=150, bbox_inches='tight',
+    plt.savefig(f'{OUTPUT_DIR}/training_results.png', dpi=150, bbox_inches='tight',
                 facecolor='#0f0f1a', edgecolor='none')
     print("\n📈 Grafik kaydedildi → training_results.png")
     
@@ -361,7 +359,7 @@ if __name__ == '__main__':
     acc = evaluate_and_plot(model, history, X_test, y_test)
     
     # Modeli kaydet
-    model.save('addiction_model.keras')
+    model.save(f'{OUTPUT_DIR}/addiction_model.keras')
     print("💾 Model kaydedildi → addiction_model.keras")
     
     # Demo test
@@ -397,7 +395,7 @@ if __name__ == '__main__':
     print(f"\nGerçek seviye: {gercek_seviye}")
     print(f"Tahmin: {label}")
     print(f"Tavsiye: {advice}")
-    
+
     print("\nOlasılıklar:")
     siniflar = ['Sağlıklı', 'Dikkatli', 'Risk', 'Bağımlılık Başlıyor', 'Ciddi Bağımlılık']
     for k, v in zip(siniflar, tahmin_probs):
