@@ -1,0 +1,373 @@
+"""
+Sosyal Medya Bağımlılık Dedektörü — Model Eğitim Pipeline'ı
+============================================================
+Kaggle veri seti: "Social Media & Mental Health"
+Çalıştırma: python train_model.py
+"""
+
+import numpy as np
+import pandas as pd
+import os
+import json
+import pickle
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix
+import tensorflow as tf
+from tensorflow.keras import layers, callbacks
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# ─────────────────────────────────────────
+# 1. SENTETİK VERİ ÜRET (Kaggle'da yoksa)
+# ─────────────────────────────────────────
+def generate_synthetic_data(n=600):
+    """
+    Gerçek Kaggle verisi yoksa sentetik veri üretir.
+    Kaggle'dan indirilen CSV varsa bu fonksiyonu atlayın.
+    """
+    np.random.seed(42)
+    
+    records = []
+    for _ in range(n):
+        # Bağımlılık seviyesi 1-5 (dengeli dağılım)
+        addiction = np.random.choice([1, 2, 3, 4, 5], p=[0.15, 0.20, 0.25, 0.22, 0.18])
+        
+        # Özellikleri bağımlılık seviyesine göre oluştur
+        base = addiction / 5.0  # 0.2 → 1.0 arasında normalize baz
+        
+        record = {
+            # Demografik
+            'age':              int(np.clip(np.random.normal(22 + addiction, 5), 13, 60)),
+            'gender':           np.random.choice(['Male', 'Female', 'Non-binary'], p=[0.45, 0.45, 0.10]),
+            'relationship':     np.random.choice(['Single', 'In relationship', 'Married'], p=[0.5, 0.35, 0.15]),
+            'occupation':       np.random.choice(['Student', 'Employee', 'Freelancer', 'Unemployed'], p=[0.45, 0.30, 0.15, 0.10]),
+            
+            # Kullanım alışkanlıkları
+            'daily_hours':      float(np.clip(np.random.normal(1 + addiction * 1.2, 0.8), 0.5, 10)),
+            'platforms_count':  int(np.clip(np.random.normal(1 + addiction, 1), 1, 8)),
+            'checks_per_day':   int(np.clip(np.random.normal(5 + addiction * 8, 5), 1, 80)),
+            'night_usage':      int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
+            
+            # Psikolojik göstergeler
+            'fomo_score':       int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
+            'distraction':      int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
+            'restlessness':     int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
+            'anxiety':          int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
+            'depression':       int(np.clip(np.random.normal(base * 3.5, 1), 1, 5)),
+            'self_comparison':  int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
+            'validation_seek':  int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
+            
+            # Uyku & günlük hayat
+            'sleep_issues':     int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
+            'productivity_loss':int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
+            'relationship_harm':int(np.clip(np.random.normal(base * 3, 1), 1, 5)),
+            'purpose_less':     int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
+            
+            # Hedef
+            'addiction_score': addiction
+        }
+        records.append(record)
+    
+    df = pd.DataFrame(records)
+    df.to_csv('social_media_usage.csv', index=False)
+    print(f"✅ {n} satırlık sentetik veri oluşturuldu → social_media_usage.csv")
+    return df
+
+
+# ─────────────────────────────────────────
+# 2. VERİ YÜKLEME & ÖN İŞLEME
+# ─────────────────────────────────────────
+def load_and_preprocess(csv_path='social_media_usage.csv'):
+    if not os.path.exists(csv_path):
+        print("📊 CSV bulunamadı, sentetik veri üretiliyor...")
+        df = generate_synthetic_data()
+    else:
+        df = pd.read_csv(csv_path)
+        print(f"✅ Veri yüklendi: {df.shape[0]} satır, {df.shape[1]} sütun")
+    
+    print("\n📋 Veri özeti:")
+    print(df['addiction_score'].value_counts().sort_index())
+    
+    # Kategorik sütunlar
+    cat_cols = ['gender', 'relationship', 'occupation']
+    label_encoders = {}
+    
+    for col in cat_cols:
+        if col in df.columns:
+            le = LabelEncoder()
+            df[col] = le.fit_transform(df[col].astype(str))
+            label_encoders[col] = le
+    
+    # Özellik & hedef ayır
+    target_col = 'addiction_score'
+    feature_cols = [c for c in df.columns if c != target_col]
+    
+    X = df[feature_cols].values.astype(np.float32)
+    y = (df[target_col].values - 1).astype(np.int32)  # 0-4 arası
+    
+    # Ölçeklendir
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    # Böl
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_scaled, y, test_size=0.2, random_state=42, stratify=y
+    )
+    
+    print(f"\n📐 Özellik sayısı: {X.shape[1]}")
+    print(f"🎓 Train: {X_train.shape[0]}, Test: {X_test.shape[0]}")
+    
+    # Scaler & encoder kaydet
+    with open('scaler.pkl', 'wb') as f:
+        pickle.dump(scaler, f)
+    with open('label_encoders.pkl', 'wb') as f:
+        pickle.dump(label_encoders, f)
+    with open('feature_cols.json', 'w') as f:
+        json.dump(feature_cols, f)
+    
+    return X_train, X_test, y_train, y_test, X.shape[1]
+
+
+# ─────────────────────────────────────────
+# 3. MODEL MİMARİSİ
+# ─────────────────────────────────────────
+def build_model(input_dim, num_classes=5):
+    """
+    Dense sinir ağı — Batch Normalization + Dropout ile
+    """
+    inputs = tf.keras.Input(shape=(input_dim,), name='input')
+    
+    x = layers.Dense(128, name='dense_1')(inputs)
+    x = layers.BatchNormalization(name='bn_1')(x)
+    x = layers.Activation('relu')(x)
+    x = layers.Dropout(0.3, name='drop_1')(x)
+    
+    x = layers.Dense(64, name='dense_2')(x)
+    x = layers.BatchNormalization(name='bn_2')(x)
+    x = layers.Activation('relu')(x)
+    x = layers.Dropout(0.3, name='drop_2')(x)
+    
+    x = layers.Dense(32, activation='relu', name='dense_3')(x)
+    x = layers.Dropout(0.2, name='drop_3')(x)
+    
+    outputs = layers.Dense(num_classes, activation='softmax', name='output')(x)
+    
+    model = tf.keras.Model(inputs, outputs, name='SocialMediaAddictionDetector')
+    
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+    )
+    
+    return model
+
+
+# ─────────────────────────────────────────
+# 4. EĞİTİM
+# ─────────────────────────────────────────
+def train(model, X_train, y_train, epochs=80):
+    cb_list = [
+        callbacks.EarlyStopping(
+            monitor='val_loss', patience=12,
+            restore_best_weights=True, verbose=1
+        ),
+        callbacks.ReduceLROnPlateau(
+            monitor='val_loss', factor=0.5,
+            patience=6, min_lr=1e-5, verbose=1
+        ),
+        callbacks.ModelCheckpoint(
+            'best_model.keras', monitor='val_accuracy',
+            save_best_only=True, verbose=0
+        )
+    ]
+    
+    history = model.fit(
+        X_train, y_train,
+        validation_split=0.2,
+        epochs=epochs,
+        batch_size=32,
+        callbacks=cb_list,
+        verbose=1
+    )
+    
+    return history
+
+
+# ─────────────────────────────────────────
+# 5. DEĞERLENDİRME & GRAFİKLER
+# ─────────────────────────────────────────
+def evaluate_and_plot(model, history, X_test, y_test):
+    # Test doğruluğu
+    loss, acc = model.evaluate(X_test, y_test, verbose=0)
+    print(f"\n🎯 Test Accuracy: {acc:.4f} ({acc*100:.1f}%)")
+    print(f"📉 Test Loss: {loss:.4f}")
+    
+    # Tahminler
+    y_pred = np.argmax(model.predict(X_test, verbose=0), axis=1)
+    
+    labels = ['Sağlıklı', 'Dikkatli', 'Risk', 'Bağımlılık Başlıyor', 'Ciddi Bağımlılık']
+    print("\n📊 Sınıflandırma Raporu:")
+    print(classification_report(y_test, y_pred, target_names=labels))
+    
+    # Grafik
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig.patch.set_facecolor('#0f0f1a')
+    
+    for ax in axes:
+        ax.set_facecolor('#1a1a2e')
+        ax.tick_params(colors='#aaaacc')
+        ax.spines['bottom'].set_color('#333355')
+        ax.spines['left'].set_color('#333355')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+    
+    # Accuracy
+    axes[0].plot(history.history['accuracy'], color='#7c3aed', linewidth=2, label='Train')
+    axes[0].plot(history.history['val_accuracy'], color='#06b6d4', linewidth=2, linestyle='--', label='Val')
+    axes[0].set_title('Model Accuracy', color='white', fontsize=13, pad=10)
+    axes[0].set_xlabel('Epoch', color='#aaaacc')
+    axes[0].set_ylabel('Accuracy', color='#aaaacc')
+    axes[0].legend(facecolor='#1a1a2e', labelcolor='white')
+    axes[0].grid(alpha=0.15, color='#555577')
+    
+    # Loss
+    axes[1].plot(history.history['loss'], color='#f59e0b', linewidth=2, label='Train')
+    axes[1].plot(history.history['val_loss'], color='#ef4444', linewidth=2, linestyle='--', label='Val')
+    axes[1].set_title('Model Loss', color='white', fontsize=13, pad=10)
+    axes[1].set_xlabel('Epoch', color='#aaaacc')
+    axes[1].set_ylabel('Loss', color='#aaaacc')
+    axes[1].legend(facecolor='#1a1a2e', labelcolor='white')
+    axes[1].grid(alpha=0.15, color='#555577')
+    
+    # Confusion matrix
+    cm = confusion_matrix(y_test, y_pred)
+    sns.heatmap(
+        cm, ax=axes[2],
+        annot=True, fmt='d', cmap='RdPu',
+        xticklabels=['S', 'D', 'R', 'B', 'CB'],
+        yticklabels=['S', 'D', 'R', 'B', 'CB'],
+        cbar=False
+    )
+    axes[2].set_title('Confusion Matrix', color='white', fontsize=13, pad=10)
+    axes[2].set_xlabel('Tahmin', color='#aaaacc')
+    axes[2].set_ylabel('Gerçek', color='#aaaacc')
+    axes[2].tick_params(colors='#aaaacc')
+    
+    plt.suptitle('Sosyal Medya Bağımlılık Dedektörü — Eğitim Sonuçları',
+                 color='white', fontsize=15, y=1.02)
+    plt.tight_layout()
+    plt.savefig('training_results.png', dpi=150, bbox_inches='tight',
+                facecolor='#0f0f1a', edgecolor='none')
+    print("\n📈 Grafik kaydedildi → training_results.png")
+    
+    return acc
+
+
+# ─────────────────────────────────────────
+# 6. DEMO FONKSİYONU
+# ─────────────────────────────────────────
+def bagimlilik_skoru(model, scaler, kullanici_verisi: list) -> dict:
+    """
+    Tek kullanıcı tahmini.
+    kullanici_verisi: feature_cols sırasında sayısal değerler
+    """
+    veri = scaler.transform([kullanici_verisi])
+    tahmin_probs = model.predict(veri, verbose=0)[0]
+    seviye = int(np.argmax(tahmin_probs)) + 1
+    
+    etiketler = {
+        1: ("✅ Sağlıklı",           "#22c55e", "Sosyal medya kullanımın dengeli. Böyle devam et!"),
+        2: ("🟡 Dikkatli ol",        "#eab308", "Küçük riskler var. Ekran süresini takip etmeye başla."),
+        3: ("🟠 Risk altında",       "#f97316", "Belirgin bağımlılık işaretleri var. Dijital detoks dene."),
+        4: ("🔴 Bağımlılık başlıyor","#ef4444", "Ciddi uyarı! Uzman desteği faydalı olabilir."),
+        5: ("🚨 Ciddi bağımlılık",   "#dc2626", "Profesyonel destek almanı şiddetle tavsiye ederiz.")
+    }
+    
+    label, color, advice = etiketler[seviye]
+    
+    return {
+        'level': seviye,
+        'label': label,
+        'color': color,
+        'advice': advice,
+        'probabilities': {
+            'Sağlıklı':           float(tahmin_probs[0]),
+            'Dikkatli':           float(tahmin_probs[1]),
+            'Risk':               float(tahmin_probs[2]),
+            'Bağımlılık Başlıyor':float(tahmin_probs[3]),
+            'Ciddi Bağımlılık':   float(tahmin_probs[4])
+        }
+    }
+
+
+# ─────────────────────────────────────────
+# 7. ANA ÇALIŞTIRMA
+# ─────────────────────────────────────────
+if __name__ == '__main__':
+    print("=" * 55)
+    print("  Sosyal Medya Bağımlılık Dedektörü — Model Eğitimi")
+    print("=" * 55)
+    
+    # Veri
+    X_train, X_test, y_train, y_test, input_dim = load_and_preprocess()
+    
+    # Model
+    model = build_model(input_dim)
+    model.summary()
+    
+    # Eğitim
+    print("\n🚀 Eğitim başlıyor...")
+    history = train(model, X_train, y_train, epochs=80)
+    
+    # Değerlendirme
+    acc = evaluate_and_plot(model, history, X_test, y_test)
+    
+    # Modeli kaydet
+    model.save('addiction_model.keras')
+    print("💾 Model kaydedildi → addiction_model.keras")
+    
+    # Demo test
+    print("\n🎮 Demo test:")
+    with open('feature_cols.json') as f:
+        feature_cols = json.load(f)
+    
+    import pickle
+    with open('scaler.pkl', 'rb') as f:
+        scaler = pickle.load(f)
+    
+    # Örnek: Yüksek bağımlılık profili
+    ornek_kullanici = [
+        25,    # age
+        1,     # gender (encoded)
+        0,     # relationship (encoded)
+        0,     # occupation (encoded)
+        6.5,   # daily_hours
+        5,     # platforms_count
+        45,    # checks_per_day
+        5,     # night_usage
+        5,     # fomo_score
+        5,     # distraction
+        4,     # restlessness
+        4,     # anxiety
+        3,     # depression
+        4,     # self_comparison
+        5,     # validation_seek
+        4,     # sleep_issues
+        5,     # productivity_loss
+        3,     # relationship_harm
+        4      # purpose_less
+    ]
+    
+    sonuc = bagimlilik_skoru(model, scaler, ornek_kullanici)
+    print(f"\nSeviye: {sonuc['label']}")
+    print(f"Tavsiye: {sonuc['advice']}")
+    print("\nOlasılıklar:")
+    for k, v in sonuc['probabilities'].items():
+        bar = '█' * int(v * 30)
+        print(f"  {k:25s} {bar} {v:.1%}")
+    
+    print(f"\n✅ Tüm işlem tamamlandı! Test accuracy: {acc*100:.1f}%")
