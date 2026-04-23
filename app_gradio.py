@@ -97,6 +97,8 @@ SECTIONS = {
 # Input builder
 # ─────────────────────────────────────────
 def build_input_for(col):
+    if col == 'Age':
+        return None 
     lbl = tr(col); low = col.lower()
     if col in label_encoders:
         eng = list(label_encoders[col].classes_)

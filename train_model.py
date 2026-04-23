@@ -29,80 +29,57 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # ─────────────────────────────────────────
 def compute_addiction_score(df):
     """
-    DSM-5 + gelişimsel psikoloji esaslı bağımlılık skoru.
-    Yaş non-lineer: 10-18 peak, 18-35 yumuşak düşüş, 35+ düşük plato.
+    DSM-5 esinli + davranışsal faktörler.
+    Not: Age, bu veri setinin yaş aralığı dar olduğu için formülde kullanılmaz.
     """
     def norm(series, max_val, invert=False):
         v = np.clip(series / max_val, 0, 1)
         return 1 - v if invert else v
 
-    # ── ANA SİNYALLER (klinik) ──
+    # Ana sinyaller
     screen = norm(df['Daily_Screen_Time_Hours'], 10)
     night  = norm(df['Late_Night_Usage'], 5)
     gad    = norm(df['GAD_7_Score'], 21)
     phq    = norm(df['PHQ_9_Score'], 27)
-
-    # ── YAN SİNYALLER (davranışsal) ──
     sleep_risk = norm(df['Sleep_Duration_Hours'], 10, invert=True)
 
-    # ── YAŞ RISK (gelişimsel — non-lineer) ──
-    age = df['Age'].values
-    age_risk = np.where(
-        age <= 18, 1.0,
-        np.where(
-            age <= 35, 1.0 - (age - 18) * 0.035,
-            np.maximum(0.2, 0.6 - (age - 35) * 0.015)
-        )
-    )
-    age_risk = pd.Series(age_risk, index=df.index)
-
-    # ── KATEGORİK RISK MAPPİNGLER ──
+    # Kategorik mapping'ler
     archetype_risk = df['User_Archetype'].map({
-        'Hyper-Connected':    1.0,
-        'Passive Scroller':   0.7,
-        'Average User':       0.5,
-        'Digital Minimalist': 0.1,
+        'Hyper-Connected': 1.0, 'Passive Scroller': 0.7,
+        'Average User': 0.5, 'Digital Minimalist': 0.1,
     }).fillna(0.5)
 
     content_risk = df['Dominant_Content_Type'].map({
-        'Entertainment/Comedy': 0.85,
-        'Lifestyle/Fashion':    0.75,
-        'Gaming':               0.70,
-        'News/Politics':        0.55,
-        'Self-Help/Motivation': 0.35,
-        'Educational/Tech':     0.20,
+        'Entertainment/Comedy': 0.85, 'Lifestyle/Fashion': 0.75,
+        'Gaming': 0.70, 'News/Politics': 0.55,
+        'Self-Help/Motivation': 0.35, 'Educational/Tech': 0.20,
     }).fillna(0.5)
 
     activity_risk = df['Activity_Type'].map({
-        'Passive': 0.8,
-        'Active':  0.3,
+        'Passive': 0.8, 'Active': 0.3,
     }).fillna(0.5)
 
     comparison_risk = df['Social_Comparison_Trigger'].astype(float).clip(0, 1)
 
-    # ── NON-LİNEER ETKİLEŞİMLER ──
-    compound_risk     = screen * (gad + phq) / 2
-    sleep_mental      = sleep_risk * (gad + phq) / 2
-    young_screen_risk = age_risk * screen       # YENİ: genç + ekran
+    # Non-lineer etkileşimler
+    compound_risk = screen * (gad + phq) / 2
+    sleep_mental  = sleep_risk * (gad + phq) / 2
 
-    # ── AĞIRLIKLI TOPLAM ──
+    # Ağırlıklı toplam — age kaldırıldı, diğer ağırlıklar yeniden dengelendi
     raw = (
-        screen            * 0.15 +
-        night             * 0.10 +
-        gad               * 0.13 +
-        phq               * 0.10 +
-        sleep_risk        * 0.07 +
-        age_risk          * 0.10 +   # ← yaş önemli
-        archetype_risk    * 0.08 +
-        content_risk      * 0.05 +
-        activity_risk     * 0.05 +
-        comparison_risk   * 0.07 +
-        compound_risk     * 0.04 +
-        sleep_mental      * 0.03 +
-        young_screen_risk * 0.03     # ← yeni
+        screen          * 0.18 +
+        night           * 0.12 +
+        gad             * 0.15 +
+        phq             * 0.12 +
+        sleep_risk      * 0.08 +
+        archetype_risk  * 0.10 +
+        content_risk    * 0.05 +
+        activity_risk   * 0.05 +
+        comparison_risk * 0.08 +
+        compound_risk   * 0.04 +
+        sleep_mental    * 0.03
     )
 
-    # Gerçekçi gürültü
     noise = np.random.RandomState(42).normal(0, 0.03, len(raw))
     raw = np.clip(raw + noise, 0, 1)
     return raw
@@ -191,7 +168,7 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     # 🧹 2. GEREKSİZ KOLONLARI SİL
     # ─────────────────────────────────────────
     # Gereksiz kolonları sil
-    drop_cols = ['User_ID', 'GAD_7_Severity', 'PHQ_9_Severity', 'addiction_score_raw']
+    drop_cols = ['User_ID', 'Age', 'GAD_7_Severity', 'PHQ_9_Severity', 'addiction_score_raw']
     for col in drop_cols:
         if col in df.columns:
             df = df.drop(columns=[col])
