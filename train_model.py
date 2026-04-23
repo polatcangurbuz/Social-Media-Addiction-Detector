@@ -348,6 +348,41 @@ def evaluate_and_plot(model, history, X_test, y_test):
     
     return acc
 
+# ─────────────────────────────────────────
+# FEATURE IMPORTANCE (Permutation)
+# ─────────────────────────────────────────
+def feature_importance(model, X_test, y_test, feature_cols):
+    """
+    Her feature'ı rastgele karıştırıp doğruluğun ne kadar düştüğünü ölçer.
+    Çok düşerse → feature önemli.  Değişmezse → feature işe yaramıyor.
+    """
+    baseline = model.evaluate(X_test, y_test, verbose=0)[1]
+    importances = []
+    
+    np.random.seed(42)
+    for i, col in enumerate(feature_cols):
+        X_shuffled = X_test.copy()
+        np.random.shuffle(X_shuffled[:, i])
+        score = model.evaluate(X_shuffled, y_test, verbose=0)[1]
+        importances.append((col, baseline - score))
+    
+    importances.sort(key=lambda x: x[1], reverse=True)
+    max_imp = max(abs(x[1]) for x in importances) or 1
+    
+    print("\n" + "═" * 60)
+    print("  🔍 FEATURE IMPORTANCE (Permutation Method)")
+    print("═" * 60)
+    print(f"  Baseline accuracy: {baseline:.4f}\n")
+    print(f"  {'Özellik':<32}{'Önem':>10}   Bar")
+    print("  " + "─" * 58)
+    
+    for col, imp in importances:
+        bar_len = int((imp / max_imp) * 25) if imp > 0 else 0
+        bar = '█' * bar_len
+        flag = "  ← önemsiz" if imp < 0.005 else ""
+        print(f"  {col:<32}{imp:>10.4f}   {bar}{flag}")
+    print()
+    return importances
 
 # ─────────────────────────────────────────
 # 6. DEMO FONKSİYONU
@@ -408,6 +443,8 @@ if __name__ == '__main__':
     
     # Değerlendirme
     acc = evaluate_and_plot(model, history, X_test, y_test)
+
+    feature_importance(model, X_test, y_test, feature_cols)
     
     # Modeli kaydet
     model.save(f'{OUTPUT_DIR}/addiction_model.keras')
