@@ -395,34 +395,58 @@ def evaluate_and_plot(model, history, X_test, y_test):
 # ─────────────────────────────────────────
 def feature_importance(model, X_test, y_test, feature_cols):
     """
-    Her feature'ı rastgele karıştırıp doğruluğun ne kadar düştüğünü ölçer.
-    Çok düşerse → feature önemli.  Değişmezse → feature işe yaramıyor.
+    Permutation importance + one-hot grupları için group importance.
     """
     baseline = model.evaluate(X_test, y_test, verbose=0)[1]
     importances = []
     
-    np.random.seed(42)
+    # One-hot gruplarını tespit et
+    one_hot_prefixes = ['Dominant_Content_Type', 'Primary_Platform']
+    groups = {}  # prefix -> [indices]
+    individual_cols = []
+    
     for i, col in enumerate(feature_cols):
+        matched = False
+        for prefix in one_hot_prefixes:
+            if col.startswith(prefix + '_'):
+                groups.setdefault(prefix, []).append(i)
+                matched = True
+                break
+        if not matched:
+            individual_cols.append((i, col))
+    
+    np.random.seed(42)
+    
+    # Bireysel feature'lar
+    for i, col in individual_cols:
         X_shuffled = X_test.copy()
         np.random.shuffle(X_shuffled[:, i])
         score = model.evaluate(X_shuffled, y_test, verbose=0)[1]
         importances.append((col, baseline - score))
     
+    # Gruplar — tüm one-hot kolonlarını birlikte karıştır
+    for prefix, indices in groups.items():
+        X_shuffled = X_test.copy()
+        perm = np.random.permutation(len(X_shuffled))
+        X_shuffled[:, indices] = X_shuffled[perm][:, indices]
+        score = model.evaluate(X_shuffled, y_test, verbose=0)[1]
+        importances.append((f"{prefix} (grup)", baseline - score))
+    
     importances.sort(key=lambda x: x[1], reverse=True)
     max_imp = max(abs(x[1]) for x in importances) or 1
     
     print("\n" + "═" * 60)
-    print("  🔍 FEATURE IMPORTANCE (Permutation Method)")
+    print("  🔍 FEATURE IMPORTANCE (Group-aware)")
     print("═" * 60)
     print(f"  Baseline accuracy: {baseline:.4f}\n")
-    print(f"  {'Özellik':<32}{'Önem':>10}   Bar")
-    print("  " + "─" * 58)
+    print(f"  {'Özellik':<40}{'Önem':>10}   Bar")
+    print("  " + "─" * 66)
     
     for col, imp in importances:
         bar_len = int((imp / max_imp) * 25) if imp > 0 else 0
         bar = '█' * bar_len
         flag = "  ← önemsiz" if imp < 0.005 else ""
-        print(f"  {col:<32}{imp:>10.4f}   {bar}{flag}")
+        print(f"  {col:<40}{imp:>10.4f}   {bar}{flag}")
     print()
     return importances
 

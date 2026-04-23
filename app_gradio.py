@@ -134,7 +134,10 @@ def predict(*args):
         else:
             kullanici.append(float(val))
     veri  = scaler.transform([kullanici])
-    probs = model.predict(veri, verbose=0)[0]
+    logits = model.predict(veri, verbose=0)[0]
+    temperature = 1.5   # >1 yumuşatır, <1 keskinleştirir
+    softened = np.exp(np.log(logits + 1e-9) / temperature)
+    probs = softened / softened.sum()
     seviye = int(np.argmax(probs)) + 1
     color, label, advice = LEVELS[seviye]
 
