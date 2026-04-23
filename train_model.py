@@ -102,9 +102,7 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     )
 
     df['addiction_score'] = pd.qcut(
-        df['addiction_score_raw'],
-        5,
-        labels=[1,2,3,4,5]
+        df['addiction_score_raw'], 5, labels=[1,2,3,4,5]
     ).astype(int)
 
     print("\n📋 Addiction score dağılımı:")
@@ -122,7 +120,6 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     # ─────────────────────────────────────────
     label_encoders = {}
     cat_cols = df.select_dtypes(include='object').columns
-
     for col in cat_cols:
         le = LabelEncoder()
         df[col] = le.fit_transform(df[col].astype(str))
@@ -138,18 +135,18 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     y = (df[target_col].values - 1).astype(np.int32)
 
     # ─────────────────────────────────────────
-    # ⚖️ 5. SCALE
-    # ─────────────────────────────────────────
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train_raw)
-    X_test  = scaler.transform(X_test_raw)
-
-    # ─────────────────────────────────────────
-    # ✂️ 6. TRAIN / TEST SPLIT
+    # ✂️ 5. TRAIN / TEST SPLIT (önce ham veri ile)
     # ─────────────────────────────────────────
     X_train_raw, X_test_raw, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
+
+    # ─────────────────────────────────────────
+    # ⚖️ 6. SCALE (sadece train'e fit — leakage önlenir)
+    # ─────────────────────────────────────────
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train_raw)
+    X_test  = scaler.transform(X_test_raw)
 
     print(f"\n📐 Özellik sayısı: {X.shape[1]}")
     print(f"🎓 Train: {X_train.shape[0]}, Test: {X_test.shape[0]}")
@@ -157,9 +154,12 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     # ─────────────────────────────────────────
     # 💾 7. KAYDET
     # ─────────────────────────────────────────
-    with open(f'{OUTPUT_DIR}/scaler.pkl', 'wb') as f: pickle.dump(scaler, f)
-    with open(f'{OUTPUT_DIR}/label_encoders.pkl', 'wb') as f: pickle.dump(label_encoders, f)
-    with open(f'{OUTPUT_DIR}/feature_cols.json', 'w') as f: json.dump(feature_cols, f)
+    with open(f'{OUTPUT_DIR}/scaler.pkl', 'wb') as f:
+        pickle.dump(scaler, f)
+    with open(f'{OUTPUT_DIR}/label_encoders.pkl', 'wb') as f:
+        pickle.dump(label_encoders, f)
+    with open(f'{OUTPUT_DIR}/feature_cols.json', 'w') as f:
+        json.dump(feature_cols, f)
 
     return (X_train, X_test, y_train, y_test,
             X_test_raw, feature_cols, label_encoders, X.shape[1])
