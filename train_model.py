@@ -80,7 +80,7 @@ def generate_synthetic_data(n=600):
 # ─────────────────────────────────────────
 # 2. VERİ YÜKLEME & ÖN İŞLEME
 # ─────────────────────────────────────────
-def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/social-media-and-mental-health/social_media_mental_health.csv'):
+def load_and_preprocess(csv_path='/kaggle/input/social-media-mental-health/social_media_mental_health.csv'):
     if not os.path.exists(csv_path):
         print("📊 CSV bulunamadı, sentetik veri üretiliyor...")
         df = generate_synthetic_data()
@@ -88,46 +88,80 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
         df = pd.read_csv(csv_path)
         print(f"✅ Veri yüklendi: {df.shape[0]} satır, {df.shape[1]} sütun")
     
-    print("\n📋 Veri özeti:")
+    # ─────────────────────────────────────────
+    # 🧠 1. ADDICTION SCORE OLUŞTUR
+    # ─────────────────────────────────────────
+    df['addiction_score_raw'] = (
+        df['Daily_Screen_Time_Hours'] * 0.4 +
+        df['Late_Night_Usage'] * 0.2 +
+        df['GAD_7_Score'] * 0.2 +
+        df['PHQ_9_Score'] * 0.2
+    )
+
+    df['addiction_score'] = pd.qcut(
+        df['addiction_score_raw'],
+        5,
+        labels=[1,2,3,4,5]
+    ).astype(int)
+
+    print("\n📋 Addiction score dağılımı:")
     print(df['addiction_score'].value_counts().sort_index())
-    
-    # Kategorik sütunlar
-    cat_cols = ['gender', 'relationship', 'occupation']
+
+    # ─────────────────────────────────────────
+    # 🧹 2. GEREKSİZ KOLONLARI SİL
+    # ─────────────────────────────────────────
+    if 'User_ID' in df.columns:
+        df = df.drop(columns=['User_ID'])
+    df = df.drop(columns=['addiction_score_raw'])
+
+    # ─────────────────────────────────────────
+    # 🔤 3. KATEGORİK ENCODE
+    # ─────────────────────────────────────────
     label_encoders = {}
-    
+    cat_cols = df.select_dtypes(include='object').columns
+
     for col in cat_cols:
-        if col in df.columns:
-            le = LabelEncoder()
-            df[col] = le.fit_transform(df[col].astype(str))
-            label_encoders[col] = le
-    
-    # Özellik & hedef ayır
+        le = LabelEncoder()
+        df[col] = le.fit_transform(df[col].astype(str))
+        label_encoders[col] = le
+
+    # ─────────────────────────────────────────
+    # 🎯 4. FEATURE / TARGET AYIR
+    # ─────────────────────────────────────────
     target_col = 'addiction_score'
     feature_cols = [c for c in df.columns if c != target_col]
-    
+
     X = df[feature_cols].values.astype(np.float32)
-    y = (df[target_col].values - 1).astype(np.int32)  # 0-4 arası
-    
-    # Ölçeklendir
+    y = (df[target_col].values - 1).astype(np.int32)
+
+    # ─────────────────────────────────────────
+    # ⚖️ 5. SCALE
+    # ─────────────────────────────────────────
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    
-    # Böl
+
+    # ─────────────────────────────────────────
+    # ✂️ 6. TRAIN / TEST SPLIT
+    # ─────────────────────────────────────────
     X_train, X_test, y_train, y_test = train_test_split(
         X_scaled, y, test_size=0.2, random_state=42, stratify=y
     )
-    
+
     print(f"\n📐 Özellik sayısı: {X.shape[1]}")
     print(f"🎓 Train: {X_train.shape[0]}, Test: {X_test.shape[0]}")
-    
-    # Scaler & encoder kaydet
+
+    # ─────────────────────────────────────────
+    # 💾 7. KAYDET
+    # ─────────────────────────────────────────
     with open('scaler.pkl', 'wb') as f:
         pickle.dump(scaler, f)
+
     with open('label_encoders.pkl', 'wb') as f:
         pickle.dump(label_encoders, f)
+
     with open('feature_cols.json', 'w') as f:
         json.dump(feature_cols, f)
-    
+
     return X_train, X_test, y_train, y_test, X.shape[1]
 
 
