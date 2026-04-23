@@ -179,13 +179,22 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     # ─────────────────────────────────────────
     # 🧹 2. GEREKSİZ KOLONLARI SİL
     # ─────────────────────────────────────────
-    if 'User_ID' in df.columns:
-        df = df.drop(columns=['User_ID'])
-    df = df.drop(columns=['addiction_score_raw'])
+    # Gereksiz kolonları sil
+    drop_cols = ['User_ID', 'GAD_7_Severity', 'PHQ_9_Severity', 'addiction_score_raw']
+    for col in drop_cols:
+        if col in df.columns:
+            df = df.drop(columns=[col])
 
     # ─────────────────────────────────────────
-    # 🔤 3. KATEGORİK ENCODE
+    # 🔤 KATEGORİK ENCODE
     # ─────────────────────────────────────────
+    # One-hot encoding yapılacak kolonlar (ordinal ilişki YOK)
+    one_hot_cols = ['Dominant_Content_Type', 'Primary_Platform']
+    one_hot_cols = [c for c in one_hot_cols if c in df.columns]
+    if one_hot_cols:
+        df = pd.get_dummies(df, columns=one_hot_cols, prefix=one_hot_cols, dtype=float)
+    
+    # Label encoding yapılacak kolonlar (ordinal mantık var veya binary)
     label_encoders = {}
     cat_cols = df.select_dtypes(include='object').columns
     for col in cat_cols:
