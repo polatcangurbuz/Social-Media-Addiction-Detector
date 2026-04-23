@@ -374,34 +374,34 @@ if __name__ == '__main__':
         scaler = pickle.load(f)
     
     # Örnek: Yüksek bağımlılık profili
-    ornek_kullanici = [
-        25,    # age
-        1,     # gender (encoded)
-        0,     # relationship (encoded)
-        0,     # occupation (encoded)
-        6.5,   # daily_hours
-        5,     # platforms_count
-        45,    # checks_per_day
-        5,     # night_usage
-        5,     # fomo_score
-        5,     # distraction
-        4,     # restlessness
-        4,     # anxiety
-        3,     # depression
-        4,     # self_comparison
-        5,     # validation_seek
-        4,     # sleep_issues
-        5,     # productivity_loss
-        3,     # relationship_harm
-        4      # purpose_less
-    ]
+   # Test setinden rastgele bir örnek al (veri setinden bağımsız çalışır)
+    # X_test zaten scale edilmiş durumda, scaler'a tekrar sokmamak için
+    # bagimlilik_skoru fonksiyonunu atlayıp direkt model.predict kullanıyoruz
     
-    sonuc = bagimlilik_skoru(model, scaler, ornek_kullanici)
-    print(f"\nSeviye: {sonuc['label']}")
-    print(f"Tavsiye: {sonuc['advice']}")
+    idx = np.random.randint(0, len(X_test))
+    ornek_scaled = X_test[idx:idx+1]
+    gercek_seviye = int(y_test[idx]) + 1
+    
+    tahmin_probs = model.predict(ornek_scaled, verbose=0)[0]
+    seviye = int(np.argmax(tahmin_probs)) + 1
+    
+    etiketler = {
+        1: ("✅ Sağlıklı",            "Sosyal medya kullanımın dengeli. Böyle devam et!"),
+        2: ("🟡 Dikkatli ol",         "Küçük riskler var. Ekran süresini takip etmeye başla."),
+        3: ("🟠 Risk altında",        "Belirgin bağımlılık işaretleri var. Dijital detoks dene."),
+        4: ("🔴 Bağımlılık başlıyor", "Ciddi uyarı! Uzman desteği faydalı olabilir."),
+        5: ("🚨 Ciddi bağımlılık",    "Profesyonel destek almanı şiddetle tavsiye ederiz.")
+    }
+    label, advice = etiketler[seviye]
+    
+    print(f"\nGerçek seviye: {gercek_seviye}")
+    print(f"Tahmin: {label}")
+    print(f"Tavsiye: {advice}")
+    
     print("\nOlasılıklar:")
-    for k, v in sonuc['probabilities'].items():
+    siniflar = ['Sağlıklı', 'Dikkatli', 'Risk', 'Bağımlılık Başlıyor', 'Ciddi Bağımlılık']
+    for k, v in zip(siniflar, tahmin_probs):
         bar = '█' * int(v * 30)
         print(f"  {k:25s} {bar} {v:.1%}")
-    
+
     print(f"\n✅ Tüm işlem tamamlandı! Test accuracy: {acc*100:.1f}%")
