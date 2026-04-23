@@ -141,13 +141,14 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     # ⚖️ 5. SCALE
     # ─────────────────────────────────────────
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    X_train = scaler.fit_transform(X_train_raw)
+    X_test  = scaler.transform(X_test_raw)
 
     # ─────────────────────────────────────────
     # ✂️ 6. TRAIN / TEST SPLIT
     # ─────────────────────────────────────────
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_scaled, y, test_size=0.2, random_state=42, stratify=y
+    X_train_raw, X_test_raw, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
     )
 
     print(f"\n📐 Özellik sayısı: {X.shape[1]}")
@@ -160,7 +161,8 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     with open(f'{OUTPUT_DIR}/label_encoders.pkl', 'wb') as f: pickle.dump(label_encoders, f)
     with open(f'{OUTPUT_DIR}/feature_cols.json', 'w') as f: json.dump(feature_cols, f)
 
-    return X_train, X_test, y_train, y_test, X.shape[1]
+    return (X_train, X_test, y_train, y_test,
+            X_test_raw, feature_cols, label_encoders, X.shape[1])
 
 
 # ─────────────────────────────────────────
@@ -345,7 +347,8 @@ if __name__ == '__main__':
     print("=" * 55)
     
     # Veri
-    X_train, X_test, y_train, y_test, input_dim = load_and_preprocess()
+    (X_train, X_test, y_train, y_test,
+ X_test_raw, feature_cols, label_encoders, input_dim) = load_and_preprocess()
     
     # Model
     model = build_model(input_dim)
@@ -363,26 +366,38 @@ if __name__ == '__main__':
     print("💾 Model kaydedildi → addiction_model.keras")
     
     # Demo test
-    print("\n🎮 Demo test:")
-    with open('feature_cols.json') as f:
-        feature_cols = json.load(f)
-    
-    import pickle
-    with open('scaler.pkl', 'rb') as f:
-        scaler = pickle.load(f)
-    
-    # Örnek: Yüksek bağımlılık profili
-   # Test setinden rastgele bir örnek al (veri setinden bağımsız çalışır)
-    # X_test zaten scale edilmiş durumda, scaler'a tekrar sokmamak için
-    # bagimlilik_skoru fonksiyonunu atlayıp direkt model.predict kullanıyoruz
-    
+    # ───────────── Demo: rastgele bir test örneği seç ─────────────
+    print("\n" + "═" * 60)
+    print("  🎮 DEMO TEST")
+    print("═" * 60)
+
     idx = np.random.randint(0, len(X_test))
-    ornek_scaled = X_test[idx:idx+1]
-    gercek_seviye = int(y_test[idx]) + 1
-    
+    ornek_scaled   = X_test[idx:idx+1]
+    ornek_original = X_test_raw[idx]
+    gercek_seviye  = int(y_test[idx]) + 1
+
+    # ───────────── Kullanıcı profilini tablo olarak göster ─────────────
+    print("\n📋 TEST EDİLEN KULLANICI PROFİLİ\n")
+
+    print(f"  {'#':<4}{'Özellik':<32}{'Değer':<20}")
+    print("  " + "─" * 54)
+
+    for i, (col, val) in enumerate(zip(feature_cols, ornek_original), start=1):
+        # Kategorik kolonsa encoded değeri orijinal etikete çevir
+        if col in label_encoders:
+            val_str = label_encoders[col].inverse_transform([int(val)])[0]
+        elif float(val).is_integer():
+            val_str = str(int(val))
+        else:
+            val_str = f"{val:.2f}"
+        print(f"  {i:<4}{col:<32}{val_str:<20}")
+
+    print("  " + "─" * 54)
+
+    # ───────────── Tahmin yap ve sonucu göster ─────────────
     tahmin_probs = model.predict(ornek_scaled, verbose=0)[0]
     seviye = int(np.argmax(tahmin_probs)) + 1
-    
+
     etiketler = {
         1: ("✅ Sağlıklı",            "Sosyal medya kullanımın dengeli. Böyle devam et!"),
         2: ("🟡 Dikkatli ol",         "Küçük riskler var. Ekran süresini takip etmeye başla."),
@@ -391,15 +406,17 @@ if __name__ == '__main__':
         5: ("🚨 Ciddi bağımlılık",    "Profesyonel destek almanı şiddetle tavsiye ederiz.")
     }
     label, advice = etiketler[seviye]
-    
-    print(f"\nGerçek seviye: {gercek_seviye}")
-    print(f"Tahmin: {label}")
-    print(f"Tavsiye: {advice}")
+    dogru_mu = "✅ DOĞRU" if seviye == gercek_seviye else "❌ YANLIŞ"
 
-    print("\nOlasılıklar:")
+    print(f"\n🎯 Gerçek Seviye : {gercek_seviye} — {etiketler[gercek_seviye][0]}")
+    print(f"🤖 Model Tahmini : {seviye} — {label}")
+    print(f"📌 Sonuç         : {dogru_mu}")
+    print(f"💡 Tavsiye       : {advice}")
+
+    print("\n📊 Olasılık Dağılımı:")
     siniflar = ['Sağlıklı', 'Dikkatli', 'Risk', 'Bağımlılık Başlıyor', 'Ciddi Bağımlılık']
     for k, v in zip(siniflar, tahmin_probs):
         bar = '█' * int(v * 30)
-        print(f"  {k:25s} {bar} {v:.1%}")
+        print(f"  {k:22s} {bar:<30} {v:>6.1%}")
 
     print(f"\n✅ Tüm işlem tamamlandı! Test accuracy: {acc*100:.1f}%")
