@@ -1,16 +1,20 @@
 """
-Sosyal Medya Bağımlılık Dedektörü — Model Eğitim Pipeline'ı (v2)
+Sosyal Medya Bağımlılık Dedektörü — Model Eğitim Pipeline'ı (v3)
 ================================================================
-YENİLİKLER (v2):
-  ✨ Multi-modal mimari: Tabular MLP + Text LSTM branch
-  ✨ Sentetik metin verisi (her seviyeye uygun "haftalık his" cümleleri)
-  ✨ NLP pipeline (Tokenizer + Embedding + LSTM)
-  ✨ Late fusion: iki branch concat ile birleştirilip ortak sınıflandırma
+v3 DÜZELTMELERİ (v2'deki veri sızıntısını giderir):
 
-Mimari:
-    [Tabular] → Dense → BN → ReLU → Dropout → Dense → BN → ReLU → Dropout ─┐
-                                                                            ├→ Concat → Dense → Softmax
-    [Text]    → Embedding → LSTM → Dense → Dropout ────────────────────────┘
+  🔧 OLASILIKSAL DUYGU EŞLEMESİ — metin artık seviyeye bire bir bağlı değil.
+     Seviye 1 kullanıcı %15 ihtimalle "endişeli" yazabilir, seviye 5 kullanıcı
+     %5 ihtimalle "nötr" yazabilir. Bu LSTM'in ezberlemesini engeller.
+
+  🔧 TEXT DROPOUT AUGMENTATION — eğitim verisinin %30'unda metin sıfırlanmış.
+     Model "metin olmadan da tabular ile karar ver" davranışını öğreniyor.
+
+  🔧 KÜÇÜLTÜLMÜŞ + REGULARIZED TEXT BRANCH — LSTM(16) + Embedding(32) + Dropout(0.5).
+     Tabular branch'i baskın hâle getirir, LSTM yardımcı sinyale dönüşür.
+
+  🔧 LABEL ENCODING (one-hot YOK) — kategorik kolonlar tek kolonda kalır,
+     arayüzde Türkçe dropdown olarak görünür.
 
 Çalıştırma: python train_model.py
 """
@@ -37,20 +41,22 @@ OUTPUT_DIR = '/kaggle/working' if os.path.exists('/kaggle/working') else '.'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ─────────────────────────────────────────
-# NLP Hyperparametreleri
+# NLP Hyperparametreleri (v3 — küçültüldü)
 # ─────────────────────────────────────────
-MAX_SEQ_LEN = 30      # bir cümle yaklaşık 30 token
-VOCAB_SIZE  = 3000    # vocabulary
-EMBED_DIM   = 64      # embedding boyutu
-LSTM_UNITS  = 32      # LSTM gizli birim sayısı
+MAX_SEQ_LEN = 30
+VOCAB_SIZE  = 2500
+EMBED_DIM   = 32      # ↓ 64'ten 32'ye
+LSTM_UNITS  = 16      # ↓ 32'den 16'ya
+TEXT_DROPOUT_RATE = 0.30   # eğitim verisinin %30'u text-sıfırlanmış
+TAB_NOISE_STD = 0.04       # tabular feature noise (regularization)
 
 # ─────────────────────────────────────────
-# SENTETİK METİN ŞABLONLARI (her seviye için)
+# DUYGU TABANLI METİN ŞABLONLARI (v3)
+# Artık seviyeye değil, duyguya göre gruplanmış
 # ─────────────────────────────────────────
-TEXT_TEMPLATES = {
-    1: [  # Sağlıklı
+EMOTION_TEMPLATES = {
+    'positive': [
         "Bu hafta kendimi enerjik hissettim ve dinç uyandım",
-        "Sosyal medyayı sadece arkadaşlarımla iletişim için kullandım",
         "Hafta sonu doğa yürüyüşü yaptım çok keyifliydi",
         "Telefonsuz vakit geçirmek bana iyi geliyor",
         "Spor ve kitap okumak rutinim oldu memnunum",
@@ -58,66 +64,90 @@ TEXT_TEMPLATES = {
         "Hayatımdan memnunum kendime zaman ayırıyorum",
         "Arkadaşlarımla yüz yüze görüştüm çok mutluyum",
         "Hobilerime zaman ayırdım üretken bir hafta geçirdim",
-        "Telefonu sınırlı kullandım odaklanmam arttı",
+        "Yeni şeyler öğreniyorum motivasyonum yüksek",
+        "Genel olarak iyiyim hayattan zevk alıyorum",
+        "Kendimi huzurlu ve dengeli hissediyorum",
+        "Aile ile vakit geçirdim güzel bir haftaydı",
     ],
-    2: [  # Dikkatli
+    'mild_concern': [
         "Bazen telefondan kopamadığımı fark ediyorum",
-        "Akşamları biraz fazla scroll yapıyorum farkındayım",
+        "Akşamları biraz fazla scroll yapıyorum",
         "Genel olarak iyiyim ama ara sıra yoruluyorum",
-        "Sosyal medya kullanımımı biraz azaltmak istiyorum",
+        "Sosyal medya kullanımımı azaltmak istiyorum",
         "Uyku saatim son zamanlarda kaymış olabilir",
         "Çalışırken telefon dikkatimi dağıtıyor bazen",
-        "Bildirimleri kapatmayı düşünüyorum yardımcı olabilir",
-        "Genelde dengeli ama bazı günler aşırıya kaçıyorum",
-        "Ara sıra ekran sürem beni şaşırtıyor",
+        "Bildirimleri kontrol etme alışkanlığım var",
+        "Bazı günler aşırıya kaçabiliyorum",
+        "Ekran sürem ara sıra beni şaşırtıyor",
+        "Sınırları korumakta zorlanabiliyorum",
+        "Az da olsa yorgun hissettiğim günler var",
     ],
-    3: [  # Risk
-        "Telefonu elime aldığımda saatler nasıl geçiyor anlamıyorum",
+    'distress': [
+        "Telefonu elime aldığımda saatlerin geçtiğini fark etmiyorum",
         "Sürekli bildirimleri ve mesajları kontrol ediyorum",
         "Kendimi başkalarıyla karşılaştırıyorum kötü hissediyorum",
         "Konsantrasyonum düşük dikkatim çabuk dağılıyor",
         "Geceleri yatakta saatlerce telefonla vakit geçiriyorum",
-        "Ara ara anksiyete ve huzursuzluk hissediyorum",
-        "Ekran süresi raporumu görünce gerçekten şaşırıyorum",
+        "Anksiyete ve huzursuzluk hissediyorum sıkça",
+        "Uykum bozuldu sürekli yorgun hissediyorum",
         "Verimim düştü işleri ertelemeye başladım",
-        "Uykum kötüleşti sürekli yorgun hissediyorum",
-    ],
-    4: [  # Bağımlılık başlıyor
         "Telefonsuz duramıyorum sürekli kontrol etmem gerekiyor",
-        "Uykum çok bozuldu geceleri zor uyuyabiliyorum",
-        "Sosyal medyada kendimi yetersiz ve eksik hissediyorum",
-        "Verimim ciddi düştü işlerimi yetiştiremiyorum",
+        "Sosyal medyada kendimi yetersiz hissediyorum",
+        "FOMO hissediyorum bir şey kaçırıyorum gibi",
         "Sürekli kaygılıyım dinlenemiyorum kafam dağınık",
-        "FOMO yüzünden telefonu bir an bile bırakamıyorum",
-        "İlişkilerim etkilenmeye başladı ailem şikayet ediyor",
-        "Telefonu elimden alsalar paniğe kapılırdım sanırım",
-        "Sabahları yorgun kalkıyorum keyifsizim",
     ],
-    5: [  # Ciddi
+    'severe': [
         "Hayattan zevk almıyorum sürekli telefondayım",
-        "Bütün gece scroll ediyorum uyuyamıyorum perişanım",
+        "Bütün gece scroll ediyorum uyuyamıyorum",
         "Kendimi değersiz ve yalnız hissediyorum",
         "Yardıma ihtiyacım olduğunu biliyorum ama duramıyorum",
-        "İlişkilerim bozuldu kimseyle görüşmüyorum izole hissediyorum",
-        "Depresyondayım hiçbir şey yapasım gelmiyor sadece telefon",
+        "İlişkilerim bozuldu kimseyle görüşmüyorum",
+        "Depresyondayım hiçbir şey yapasım gelmiyor",
         "Ekrandan ayrılınca panik atak gibi oluyorum",
-        "Günlerimi kaybediyorum farkındayım ama elim kolum bağlı",
-        "Hayatımın kontrolünü kaybettim profesyonel destek lazım",
+        "Günlerimi kaybediyorum elim kolum bağlı gibi",
+        "Hayatımın kontrolünü kaybettim",
+        "İzole hissediyorum çok yorgunum",
+        "Kendimi telefonun esiri gibi hissediyorum",
+    ],
+    'neutral': [
+        "Bu hafta normal geçti bir şey değişmedi",
+        "Olağan bir hafta yaşadım söyleyecek bir şey yok",
+        "İşler yolunda gidiyor genel olarak",
+        "Çok düşünmedim açıkçası",
+        "Hayat akıyor işte günler birbirine benziyor",
+        "Bilmiyorum ne hissediyorum tam olarak",
+        "Karışık bir hafta oldu ne çok iyi ne kötü",
+        "Bazı şeyler iyi bazıları kötü",
+        "Sıradan günler geçirdim özel bir şey yok",
     ],
 }
 
+# Her seviyenin her duyguyu seçme olasılığı
+LEVEL_EMOTION_PROBS = {
+    1: {'positive': 0.55, 'neutral': 0.30, 'mild_concern': 0.15},
+    2: {'positive': 0.25, 'neutral': 0.30, 'mild_concern': 0.35, 'distress': 0.10},
+    3: {'positive': 0.05, 'neutral': 0.20, 'mild_concern': 0.35, 'distress': 0.35, 'severe': 0.05},
+    4: {'neutral': 0.10, 'mild_concern': 0.15, 'distress': 0.45, 'severe': 0.30},
+    5: {'neutral': 0.05, 'mild_concern': 0.05, 'distress': 0.25, 'severe': 0.65},
+}
+
 def generate_text_for_level(level, rng):
-    """Verilen seviyeye uygun 1-2 cümleyi rastgele birleştirir."""
-    templates = TEXT_TEMPLATES[int(level)]
+    """Seviyeye göre olasılıksal duygu seç, o duygudan 1-2 cümle birleştir."""
+    emotion_probs = LEVEL_EMOTION_PROBS[int(level)]
+    emotions = list(emotion_probs.keys())
+    probs = np.array([emotion_probs[e] for e in emotions])
+    probs = probs / probs.sum()
+
+    chosen_emotion = rng.choice(emotions, p=probs)
+    templates = EMOTION_TEMPLATES[chosen_emotion]
     n = rng.choice([1, 2])
-    selected = rng.choice(templates, size=n, replace=False)
+    selected = rng.choice(templates, size=min(n, len(templates)), replace=False)
     return " ".join(selected)
 
 # ─────────────────────────────────────────
 # Klinik Tabanlı Bağımlılık Skoru
 # ─────────────────────────────────────────
 def compute_addiction_score(df):
-    """DSM-5 esinli + davranışsal faktörlerden toplam skor üretir."""
     def norm(series, max_val, invert=False):
         v = np.clip(series / max_val, 0, 1)
         return 1 - v if invert else v
@@ -144,7 +174,6 @@ def compute_addiction_score(df):
     }).fillna(0.5)
 
     comparison_risk = df['Social_Comparison_Trigger'].astype(float).clip(0, 1)
-
     compound_risk = screen * (gad + phq) / 2
     sleep_mental  = sleep_risk * (gad + phq) / 2
 
@@ -162,14 +191,15 @@ def compute_addiction_score(df):
         sleep_mental    * 0.03
     )
 
-    noise = np.random.RandomState(42).normal(0, 0.03, len(raw))
+    # v3: daha fazla noise → daha gerçekçi
+    noise = np.random.RandomState(42).normal(0, 0.06, len(raw))
     return np.clip(raw + noise, 0, 1)
 
 # ─────────────────────────────────────────
-# Sentetik Veri (Kaggle formatında)
+# Sentetik Veri Üretimi
 # ─────────────────────────────────────────
-def generate_synthetic_data(n=800):
-    """compute_addiction_score ile uyumlu sentetik veri üretir."""
+def generate_synthetic_data(n=1000):
+    """v3: daha fazla varyans, %15 'atipik' örnek (sağlıklı kullanıcı yüksek ekran vb.)"""
     np.random.seed(42)
     rng = np.random.default_rng(42)
 
@@ -182,15 +212,19 @@ def generate_synthetic_data(n=800):
         af = {'Hyper-Connected': 0.9, 'Passive Scroller': 0.65,
               'Average User': 0.45, 'Digital Minimalist': 0.15}[archetype]
 
+        # %15 "atipik" — feature'ları arketipten saptır (gerçekçi outlier'lar)
+        if rng.random() < 0.15:
+            af = float(np.clip(af + rng.normal(0, 0.25), 0.05, 0.95))
+
         rows.append({
             'User_ID': f'U{i:05d}',
             'Age': int(np.clip(np.random.normal(25, 7), 13, 60)),
             'Gender': rng.choice(['Male', 'Female', 'Non-binary'], p=[0.45, 0.45, 0.10]),
-            'Daily_Screen_Time_Hours': float(np.clip(np.random.normal(1 + af * 8, 1.5), 0.5, 12)),
-            'Late_Night_Usage': int(np.clip(np.random.normal(1 + af * 4, 1), 1, 5)),
-            'GAD_7_Score': int(np.clip(np.random.normal(af * 18, 4), 0, 21)),
-            'PHQ_9_Score': int(np.clip(np.random.normal(af * 22, 5), 0, 27)),
-            'Sleep_Duration_Hours': float(np.clip(np.random.normal(8.5 - af * 4, 1), 3, 10)),
+            'Daily_Screen_Time_Hours': float(np.clip(np.random.normal(1 + af * 8, 2.0), 0.5, 12)),
+            'Late_Night_Usage': int(np.clip(np.random.normal(1 + af * 4, 1.2), 1, 5)),
+            'GAD_7_Score': int(np.clip(np.random.normal(af * 18, 5), 0, 21)),
+            'PHQ_9_Score': int(np.clip(np.random.normal(af * 22, 6), 0, 27)),
+            'Sleep_Duration_Hours': float(np.clip(np.random.normal(8.5 - af * 4, 1.3), 3, 10)),
             'User_Archetype': archetype,
             'Dominant_Content_Type': rng.choice([
                 'Entertainment/Comedy', 'Lifestyle/Fashion', 'Gaming',
@@ -200,16 +234,16 @@ def generate_synthetic_data(n=800):
                 ['Instagram', 'TikTok', 'Twitter', 'YouTube', 'Facebook']
             ),
             'Activity_Type': 'Passive' if af > 0.6 else rng.choice(['Active', 'Passive']),
-            'Social_Comparison_Trigger': float(np.clip(np.random.normal(af, 0.2), 0, 1)),
+            'Social_Comparison_Trigger': float(np.clip(np.random.normal(af, 0.25), 0, 1)),
         })
 
     df = pd.DataFrame(rows)
     df.to_csv('social_media_synthetic.csv', index=False)
-    print(f"✅ {n} satırlık sentetik veri üretildi → social_media_synthetic.csv")
+    print(f"✅ {n} satırlık sentetik veri üretildi (15% atipik, daha yüksek varyans)")
     return df
 
 # ─────────────────────────────────────────
-# Veri Yükleme & Ön İşleme (Multi-modal)
+# Veri Yükleme & Ön İşleme
 # ─────────────────────────────────────────
 def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/social-media-and-mental-health/social_media_mental_health.csv'):
     if not os.path.exists(csv_path):
@@ -228,16 +262,20 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     print("\n📋 Addiction score dağılımı:")
     print(df['addiction_score'].value_counts().sort_index())
 
-    # 2. Sentetik METİN üret (her satıra seviyesine uygun cümle)
-    print("\n📝 Sentetik metin verisi üretiliyor...")
+    # 2. OLASILIKSAL metin üret (artık seviyeye bire bir bağlı değil)
+    print("\n📝 Olasılıksal metin verisi üretiliyor (v3: emotion-based)...")
     rng = np.random.default_rng(42)
     df['user_text'] = df['addiction_score'].apply(
         lambda lvl: generate_text_for_level(int(lvl), rng)
     )
-    print(f"   Örnek (seviye 1): \"{df[df['addiction_score']==1]['user_text'].iloc[0]}\"")
-    print(f"   Örnek (seviye 5): \"{df[df['addiction_score']==5]['user_text'].iloc[0]}\"")
+    print(f"   Seviye 1 örnekleri:")
+    for t in df[df['addiction_score']==1]['user_text'].sample(3, random_state=1):
+        print(f"     • \"{t}\"")
+    print(f"   Seviye 5 örnekleri:")
+    for t in df[df['addiction_score']==5]['user_text'].sample(3, random_state=1):
+        print(f"     • \"{t}\"")
 
-    # 3. Metni ayır (tabular pipeline'ı etkilemesin)
+    # 3. Metni ayır
     texts = df['user_text'].values
     df = df.drop(columns=['user_text'])
 
@@ -247,16 +285,14 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
         if col in df.columns:
             df = df.drop(columns=[col])
 
-    # 5. Kategorik encoding
-    one_hot_cols = [c for c in ['Dominant_Content_Type', 'Primary_Platform'] if c in df.columns]
-    if one_hot_cols:
-        df = pd.get_dummies(df, columns=one_hot_cols, prefix=one_hot_cols, dtype=float)
-
+    # 5. KATEGORİKLER LABEL ENCODE (v3: one-hot YOK)
+    # Tüm string kolonlar tek kolonda kalır → arayüzde Türkçe dropdown
     label_encoders = {}
     for col in df.select_dtypes(include='object').columns:
         le = LabelEncoder()
         df[col] = le.fit_transform(df[col].astype(str))
         label_encoders[col] = le
+        print(f"   📋 {col}: {list(le.classes_)}")
 
     # 6. Feature/target ayır
     target_col = 'addiction_score'
@@ -270,9 +306,8 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     sequences = tokenizer.texts_to_sequences(texts)
     X_text = pad_sequences(sequences, maxlen=MAX_SEQ_LEN, padding='post', truncating='post')
     print(f"\n📝 Vocabulary size: {len(tokenizer.word_index)}")
-    print(f"   Sequence shape: {X_text.shape}")
 
-    # 8. Train/test split (her iki input'u senkron böl)
+    # 8. Train/test split
     indices = np.arange(len(y))
     train_idx, test_idx = train_test_split(
         indices, test_size=0.2, random_state=42, stratify=y
@@ -283,15 +318,33 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     X_test_text     = X_text[test_idx]
     y_train, y_test = y[train_idx], y[test_idx]
 
-    # 9. Scale (sadece tabular)
+    # 9. Scale
     scaler = StandardScaler()
     X_train_tab = scaler.fit_transform(X_train_tab_raw)
     X_test_tab  = scaler.transform(X_test_tab_raw)
 
-    print(f"\n📐 Tabular özellik sayısı: {X_tab.shape[1]}")
-    print(f"🎓 Train: {len(y_train)}, Test: {len(y_test)}")
+    # 10. TEXT DROPOUT AUGMENTATION (v3 yenilik)
+    # Eğitim verisinin %30'unu kopyala ama metnini sıfırla
+    n_aug = int(len(X_train_tab) * TEXT_DROPOUT_RATE)
+    aug_idx = np.random.RandomState(7).choice(len(X_train_tab), n_aug, replace=False)
+    X_train_tab_aug  = np.concatenate([X_train_tab, X_train_tab[aug_idx]], axis=0)
+    X_train_text_aug = np.concatenate([
+        X_train_text, np.zeros((n_aug, MAX_SEQ_LEN), dtype=X_train_text.dtype)
+    ], axis=0)
+    y_train_aug = np.concatenate([y_train, y_train[aug_idx]], axis=0)
 
-    # 10. Artifacts'ı kaydet (inference için gerekli)
+    # Karıştır
+    perm = np.random.RandomState(11).permutation(len(y_train_aug))
+    X_train_tab_aug  = X_train_tab_aug[perm]
+    X_train_text_aug = X_train_text_aug[perm]
+    y_train_aug      = y_train_aug[perm]
+
+    print(f"\n📐 Tabular özellik sayısı: {X_tab.shape[1]}")
+    print(f"🎓 Train (orijinal): {len(y_train)}")
+    print(f"🎓 Train (+ %{int(TEXT_DROPOUT_RATE*100)} text-dropout aug): {len(y_train_aug)}")
+    print(f"🧪 Test: {len(y_test)}")
+
+    # 11. Artifacts kaydet
     with open(f'{OUTPUT_DIR}/scaler.pkl', 'wb') as f:
         pickle.dump(scaler, f)
     with open(f'{OUTPUT_DIR}/label_encoders.pkl', 'wb') as f:
@@ -307,76 +360,53 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
             'embed_dim': EMBED_DIM,
             'lstm_units': LSTM_UNITS,
             'tab_input_dim': X_tab.shape[1],
+            'version': 'v3',
         }, f)
 
     return {
-        'X_train_tab': X_train_tab, 'X_test_tab': X_test_tab,
-        'X_train_text': X_train_text, 'X_test_text': X_test_text,
-        'X_test_tab_raw': X_test_tab_raw,
-        'y_train': y_train, 'y_test': y_test,
+        'X_train_tab': X_train_tab_aug, 'X_test_tab': X_test_tab,
+        'X_train_text': X_train_text_aug, 'X_test_text': X_test_text,
+        'y_train': y_train_aug, 'y_test': y_test,
         'feature_cols': feature_cols, 'label_encoders': label_encoders,
         'tokenizer': tokenizer,
         'tab_input_dim': X_tab.shape[1],
     }
 
 # ─────────────────────────────────────────
-# MULTI-MODAL MODEL (Tabular MLP + Text LSTM)
+# MULTI-MODAL MODEL (v3 — küçültüldü + güçlü regularization)
 # ─────────────────────────────────────────
 def build_model(tab_input_dim, num_classes=5):
-    """
-    İki dallı (multi-modal) derin ağ:
+    L2 = tf.keras.regularizers.l2(1e-3)   # ↑ 1e-4'ten 1e-3'e
 
-    Tabular branch:
-      Dense(64) → BN → ReLU → Dropout(0.4)
-      Dense(32) → BN → ReLU → Dropout(0.3)
-      → 32-d temsil
-
-    Text branch:
-      Embedding(3000, 64, mask_zero=True)
-      LSTM(32, dropout, recurrent_dropout)
-      Dense(16, ReLU) → Dropout(0.3)
-      → 16-d temsil
-
-    Fusion:
-      Concat(48) → Dense(32, ReLU) → Dropout(0.3)
-      → Dense(5, softmax)
-    """
-
-    # ── TABULAR BRANCH (MLP) ──────────────
+    # ── TABULAR BRANCH (baskın) ──
     tab_in = layers.Input(shape=(tab_input_dim,), name='tabular_input')
-    t = layers.Dense(64, kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-                     name='tab_dense_1')(tab_in)
+    t = layers.GaussianNoise(TAB_NOISE_STD, name='tab_noise')(tab_in)  # eğitim sırasında noise
+    t = layers.Dense(64, kernel_regularizer=L2, name='tab_dense_1')(t)
     t = layers.BatchNormalization(name='tab_bn_1')(t)
     t = layers.Activation('relu', name='tab_relu_1')(t)
-    t = layers.Dropout(0.4, name='tab_drop_1')(t)
+    t = layers.Dropout(0.5, name='tab_drop_1')(t)
 
-    t = layers.Dense(32, kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-                     name='tab_dense_2')(t)
+    t = layers.Dense(32, kernel_regularizer=L2, name='tab_dense_2')(t)
     t = layers.BatchNormalization(name='tab_bn_2')(t)
     t = layers.Activation('relu', name='tab_relu_2')(t)
-    t = layers.Dropout(0.3, name='tab_drop_2')(t)
+    t = layers.Dropout(0.4, name='tab_drop_2')(t)
 
-    # ── TEXT BRANCH (Embedding + LSTM) ────
+    # ── TEXT BRANCH (yardımcı - küçültüldü) ──
     text_in = layers.Input(shape=(MAX_SEQ_LEN,), name='text_input', dtype='int32')
     e = layers.Embedding(VOCAB_SIZE, EMBED_DIM, mask_zero=True,
-                          name='embedding')(text_in)
-    e = layers.LSTM(LSTM_UNITS, dropout=0.2, recurrent_dropout=0.2,
-                     name='lstm')(e)
-    e = layers.Dense(16, activation='relu',
-                      kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-                      name='text_dense')(e)
-    e = layers.Dropout(0.3, name='text_drop')(e)
+                          embeddings_regularizer=L2, name='embedding')(text_in)
+    e = layers.LSTM(LSTM_UNITS, dropout=0.3, recurrent_dropout=0.3,
+                     kernel_regularizer=L2, name='lstm')(e)
+    e = layers.Dense(8, activation='relu', kernel_regularizer=L2, name='text_dense')(e)
+    e = layers.Dropout(0.5, name='text_drop')(e)
 
-    # ── FUSION ────────────────────────────
+    # ── FUSION ──
     merged = layers.Concatenate(name='concat')([t, e])
-    x = layers.Dense(32, activation='relu',
-                     kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-                     name='fusion_dense')(merged)
-    x = layers.Dropout(0.3, name='fusion_drop')(x)
+    x = layers.Dense(32, activation='relu', kernel_regularizer=L2, name='fusion_dense')(merged)
+    x = layers.Dropout(0.4, name='fusion_drop')(x)
     output = layers.Dense(num_classes, activation='softmax', name='output')(x)
 
-    model = tf.keras.Model([tab_in, text_in], output,
-                           name='MultiModal_AddictionDetector')
+    model = tf.keras.Model([tab_in, text_in], output, name='MultiModal_AddictionDetector_v3')
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=5e-4),
         loss='sparse_categorical_crossentropy',
@@ -395,10 +425,10 @@ def train(model, data, epochs=80):
     print(f"\n📊 Class weights: {class_weight_dict}")
 
     cb_list = [
-        callbacks.EarlyStopping(monitor='val_loss', patience=12,
+        callbacks.EarlyStopping(monitor='val_loss', patience=15,
                                 restore_best_weights=True, verbose=1),
         callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5,
-                                     patience=6, min_lr=1e-5, verbose=1),
+                                     patience=7, min_lr=1e-5, verbose=1),
         callbacks.ModelCheckpoint(f'{OUTPUT_DIR}/best_model.keras',
                                    monitor='val_accuracy',
                                    save_best_only=True, verbose=0)
@@ -427,19 +457,27 @@ def evaluate_and_plot(model, history, data):
     print(f"\n🎯 Test Accuracy: {acc:.4f} ({acc*100:.1f}%)")
     print(f"📉 Test Loss: {loss:.4f}")
 
-    y_pred = np.argmax(model.predict([X_test_tab, X_test_text], verbose=0), axis=1)
+    if acc > 0.97:
+        print("\n⚠️  UYARI: Test accuracy %97'den yüksek — hâlâ overfitting olabilir.")
+        print("   Beklenen: %75-90 arası gerçekçi sonuç.")
+    elif acc < 0.55:
+        print("\n⚠️  UYARI: Test accuracy çok düşük — model yeterince öğrenememiş olabilir.")
 
+    y_pred = np.argmax(model.predict([X_test_tab, X_test_text], verbose=0), axis=1)
     labels = ['Sağlıklı', 'Dikkatli', 'Risk', 'Bağımlılık Başlıyor', 'Ciddi Bağımlılık']
     print("\n📊 Sınıflandırma Raporu:")
     print(classification_report(y_test, y_pred, target_names=labels))
 
-    # Branch ablation - text branch'in katkısını ölç
-    print("\n🔬 Branch Ablation Testi:")
+    # Branch ablation
+    print("🔬 Branch Ablation Testi:")
     zero_text = np.zeros_like(X_test_text)
     _, acc_no_text = model.evaluate([X_test_tab, zero_text], y_test, verbose=0)
+    zero_tab = np.zeros_like(X_test_tab)
+    _, acc_no_tab = model.evaluate([zero_tab, X_test_text], y_test, verbose=0)
     print(f"   Tam model:           {acc:.4f}")
-    print(f"   Text branch kapalı:  {acc_no_text:.4f}")
-    print(f"   LSTM katkısı:        {(acc - acc_no_text)*100:+.2f}%")
+    print(f"   Sadece tabular:      {acc_no_text:.4f}  (LSTM kapalı)")
+    print(f"   Sadece text:         {acc_no_tab:.4f}  (Tabular kapalı)")
+    print(f"   LSTM marjinal katkı: {(acc - acc_no_text)*100:+.2f}%")
 
     # Grafik
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
@@ -447,17 +485,16 @@ def evaluate_and_plot(model, history, data):
     for ax in axes:
         ax.set_facecolor('#1a1a2e')
         ax.tick_params(colors='#aaaacc')
-        ax.spines['bottom'].set_color('#333355')
-        ax.spines['left'].set_color('#333355')
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
+        for spine in ['top', 'right']:
+            ax.spines[spine].set_visible(False)
+        for spine in ['bottom', 'left']:
+            ax.spines[spine].set_color('#333355')
 
     axes[0].plot(history.history['accuracy'], color='#7c3aed', linewidth=2, label='Train')
     axes[0].plot(history.history['val_accuracy'], color='#06b6d4', linewidth=2,
                  linestyle='--', label='Val')
     axes[0].set_title('Model Accuracy', color='white', fontsize=13, pad=10)
-    axes[0].set_xlabel('Epoch', color='#aaaacc')
-    axes[0].set_ylabel('Accuracy', color='#aaaacc')
+    axes[0].set_xlabel('Epoch', color='#aaaacc'); axes[0].set_ylabel('Accuracy', color='#aaaacc')
     axes[0].legend(facecolor='#1a1a2e', labelcolor='white')
     axes[0].grid(alpha=0.15, color='#555577')
 
@@ -465,8 +502,7 @@ def evaluate_and_plot(model, history, data):
     axes[1].plot(history.history['val_loss'], color='#ef4444', linewidth=2,
                  linestyle='--', label='Val')
     axes[1].set_title('Model Loss', color='white', fontsize=13, pad=10)
-    axes[1].set_xlabel('Epoch', color='#aaaacc')
-    axes[1].set_ylabel('Loss', color='#aaaacc')
+    axes[1].set_xlabel('Epoch', color='#aaaacc'); axes[1].set_ylabel('Loss', color='#aaaacc')
     axes[1].legend(facecolor='#1a1a2e', labelcolor='white')
     axes[1].grid(alpha=0.15, color='#555577')
 
@@ -475,10 +511,9 @@ def evaluate_and_plot(model, history, data):
                 xticklabels=['S', 'D', 'R', 'B', 'CB'],
                 yticklabels=['S', 'D', 'R', 'B', 'CB'], cbar=False)
     axes[2].set_title('Confusion Matrix', color='white', fontsize=13, pad=10)
-    axes[2].set_xlabel('Tahmin', color='#aaaacc')
-    axes[2].set_ylabel('Gerçek', color='#aaaacc')
+    axes[2].set_xlabel('Tahmin', color='#aaaacc'); axes[2].set_ylabel('Gerçek', color='#aaaacc')
 
-    plt.suptitle('Sosyal Medya Bağımlılık Dedektörü v2 — Multi-modal (MLP + LSTM)',
+    plt.suptitle('Sosyal Medya Bağımlılık Dedektörü v3 — Multi-modal (MLP + LSTM)',
                  color='white', fontsize=15, y=1.02)
     plt.tight_layout()
     plt.savefig(f'{OUTPUT_DIR}/training_results.png', dpi=150, bbox_inches='tight',
@@ -491,30 +526,24 @@ def evaluate_and_plot(model, history, data):
 # ─────────────────────────────────────────
 if __name__ == '__main__':
     print("=" * 60)
-    print("  Sosyal Medya Bağımlılık Dedektörü v2 — Multi-modal")
-    print("  Mimari: Tabular MLP + Text LSTM → Fusion")
+    print("  Sosyal Medya Bağımlılık Dedektörü v3")
+    print("  (data leakage düzeltmesi + güçlü regularization)")
     print("=" * 60)
 
-    # Veri
     data = load_and_preprocess()
-
-    # Model
     model = build_model(data['tab_input_dim'])
     print("\n📐 MODEL ÖZET:")
     model.summary()
 
-    # Eğitim
     print("\n🚀 Eğitim başlıyor...")
     history = train(model, data, epochs=80)
 
-    # Değerlendirme
     acc = evaluate_and_plot(model, history, data)
 
-    # Modeli kaydet
     model.save(f'{OUTPUT_DIR}/addiction_model.keras')
     print(f"💾 Model kaydedildi → {OUTPUT_DIR}/addiction_model.keras")
 
-    # Demo test
+    # Demo
     print("\n" + "═" * 60)
     print("  🎮 DEMO TEST")
     print("═" * 60)
@@ -523,15 +552,14 @@ if __name__ == '__main__':
     sample_text = data['X_test_text'][idx:idx+1]
     true_level  = int(data['y_test'][idx]) + 1
 
-    # Reverse tokenize - kullanıcının metnini geri oku
-    reverse_word_index = {v: k for k, v in data['tokenizer'].word_index.items()}
-    decoded_text = " ".join([reverse_word_index.get(i, '') for i in sample_text[0] if i > 0])
+    rev_word = {v: k for k, v in data['tokenizer'].word_index.items()}
+    decoded_text = " ".join([rev_word.get(i, '') for i in sample_text[0] if i > 0])
 
     probs = model.predict([sample_tab, sample_text], verbose=0)[0]
     pred_level = int(np.argmax(probs)) + 1
 
     print(f"\n💬 Kullanıcı metni: \"{decoded_text}\"")
-    print(f"\n🎯 Gerçek Seviye: {true_level}")
+    print(f"🎯 Gerçek Seviye: {true_level}")
     print(f"🤖 Tahmin:        {pred_level}")
     print(f"📌 Sonuç:         {'✅ DOĞRU' if pred_level == true_level else '❌ YANLIŞ'}")
 
@@ -542,9 +570,3 @@ if __name__ == '__main__':
         print(f"  {lvl:22s} {bar:<30} {p:>6.1%}")
 
     print(f"\n✅ Eğitim tamamlandı! Test accuracy: {acc*100:.1f}%")
-    print(f"\n📁 Üretilen artifacts ({OUTPUT_DIR}/):")
-    for f in ['addiction_model.keras', 'scaler.pkl', 'label_encoders.pkl',
-              'tokenizer.pkl', 'feature_cols.json', 'config.json',
-              'training_results.png']:
-        if os.path.exists(f'{OUTPUT_DIR}/{f}'):
-            print(f"   ✓ {f}")

@@ -1,11 +1,10 @@
 """
-Sosyal Medya Bağımlılık Dedektörü — Gradio Web Demo (v2)
+Sosyal Medya Bağımlılık Dedektörü — Gradio Web Demo (v3)
 =========================================================
-YENİLİKLER:
-  ✨ Metin girişi (LSTM branch) — kullanıcı haftalık hislerini yazabilir
-  ✨ Genişletilmiş ruh sağlığı raporu (belirti analizi, davranış örüntüsü,
-     kişiselleştirilmiş öneriler, profesyonel destek uyarısı)
-  ✨ Multi-modal model entegrasyonu
+v3 GÜNCELLEMELERİ:
+  ✨ Tüm İngilizce dropdown değerleri Türkçeye çevrildi
+  ✨ Content type ve platform artık dropdown (slider değil)
+  ✨ v3 modelle uyumlu (label-encoded kategorikler)
 """
 import numpy as np, json, pickle, os
 import tensorflow as tf
@@ -31,24 +30,25 @@ with open(f'{BASE}/feature_cols.json') as f:        feature_cols   = json.load(f
 with open(f'{BASE}/config.json') as f:              config         = json.load(f)
 
 MAX_SEQ_LEN = config['max_seq_len']
-print(f"✅ Artifacts yüklendi (max_seq_len={MAX_SEQ_LEN}, features={len(feature_cols)})")
+print(f"✅ Artifacts yüklendi (v{config.get('version', '?')}, "
+      f"max_seq_len={MAX_SEQ_LEN}, features={len(feature_cols)})")
 
 # ─────────────────────────────────────────
-# Türkçeleştirme
+# Türkçe etiketler
 # ─────────────────────────────────────────
 TR_LABELS = {
     'Age':'Yaş', 'Gender':'Cinsiyet',
     'Daily_Screen_Time_Hours':'Günlük Ekran Süresi (saat)',
     'Late_Night_Usage':'Gece Kullanım Sıklığı (1-5)',
-    'GAD_7_Score':'Anksiyete (GAD-7, 0-21)',
-    'PHQ_9_Score':'Depresyon (PHQ-9, 0-27)',
+    'GAD_7_Score':'Anksiyete Skoru (GAD-7, 0-21)',
+    'PHQ_9_Score':'Depresyon Skoru (PHQ-9, 0-27)',
     'Sleep_Duration_Hours':'Günlük Uyku (saat)',
     'Sleep_Hours':'Günlük Uyku (saat)',
     'Relationship_Status':'İlişki Durumu', 'Occupation':'Meslek',
     'Platforms_Used':'Platform Sayısı',
     'User_Archetype':'Kullanıcı Profili',
     'Primary_Platform':'Ana Platform',
-    'Dominant_Content_Type':'Tüketilen İçerik',
+    'Dominant_Content_Type':'Tüketilen İçerik Türü',
     'Activity_Type':'Aktivite Türü',
     'Social_Comparison_Trigger':'Karşılaştırma Tetiği (0-1)',
     'FOMO':'FOMO Seviyesi', 'Self_Esteem':'Özgüven',
@@ -56,28 +56,71 @@ TR_LABELS = {
 }
 def tr(col): return TR_LABELS.get(col, col.replace('_', ' '))
 
+# ─────────────────────────────────────────
+# Türkçe dropdown değerleri (TÜM değerler tercüme edildi)
+# ─────────────────────────────────────────
 VALUE_TR = {
-    'Gender': {'Male':'Erkek','Female':'Kadın','Non-binary':'Non-binary','Other':'Diğer'},
+    'Gender': {
+        'Male':'Erkek',
+        'Female':'Kadın',
+        'Non-binary':'Non-binary',
+        'Other':'Diğer',
+    },
     'User_Archetype': {
-        'Average User':'Ortalama Kullanıcı','Digital Minimalist':'Dijital Minimalist',
-        'Hyper-Connected':'Aşırı Bağımlı','Passive Scroller':'Pasif Kaydırıcı',
+        'Average User':'Ortalama Kullanıcı',
+        'Digital Minimalist':'Dijital Minimalist',
+        'Hyper-Connected':'Aşırı Bağımlı',
+        'Passive Scroller':'Pasif Kaydırıcı',
     },
     'Dominant_Content_Type': {
-        'Educational/Tech':'Eğitim / Teknoloji','News':'Haber',
-        'Entertainment':'Eğlence','Sports':'Spor','Lifestyle':'Yaşam Tarzı',
-        'Gaming':'Oyun','Politics':'Siyaset','Memes':'Mizah',
-        'Fashion':'Moda','Food':'Yemek',
+        'Educational/Tech':'Eğitim / Teknoloji',
+        'News/Politics':'Haber / Siyaset',
+        'News':'Haber',
+        'Entertainment/Comedy':'Eğlence / Komedi',
+        'Entertainment':'Eğlence',
+        'Sports':'Spor',
+        'Lifestyle/Fashion':'Yaşam Tarzı / Moda',
+        'Lifestyle':'Yaşam Tarzı',
+        'Gaming':'Oyun',
+        'Self-Help/Motivation':'Kişisel Gelişim / Motivasyon',
+        'Politics':'Siyaset',
+        'Memes':'Mizah / Caps',
+        'Fashion':'Moda',
+        'Food':'Yemek',
     },
-    'Activity_Type': {'Active':'Aktif (paylaşan)','Passive':'Pasif (tüketen)'},
+    'Activity_Type': {
+        'Active':'Aktif (paylaşan)',
+        'Passive':'Pasif (tüketen)',
+    },
+    'Primary_Platform': {
+        'Instagram':'Instagram',
+        'TikTok':'TikTok',
+        'Twitter':'Twitter / X',
+        'YouTube':'YouTube',
+        'Facebook':'Facebook',
+        'Snapchat':'Snapchat',
+        'Reddit':'Reddit',
+        'LinkedIn':'LinkedIn',
+    },
     'Relationship_Status': {
-        'Single':'Bekar','In Relationship':'İlişkide',
-        'Married':'Evli','Divorced':'Boşanmış',
+        'Single':'Bekar',
+        'In Relationship':'İlişkide',
+        'Married':'Evli',
+        'Divorced':'Boşanmış',
     },
     'Occupation': {
-        'Student':'Öğrenci','Employee':'Çalışan','Freelancer':'Serbest',
-        'Unemployed':'İşsiz','Self-Employed':'Kendi İşi','Retired':'Emekli',
+        'Student':'Öğrenci',
+        'Employee':'Çalışan',
+        'Freelancer':'Serbest Çalışan',
+        'Unemployed':'İşsiz',
+        'Self-Employed':'Kendi İşinde',
+        'Retired':'Emekli',
     },
-    'Social_Comparison_Trigger': {'Low':'Düşük','Medium':'Orta','High':'Yüksek'},
+    'Social_Comparison_Trigger': {
+        'Low':'Düşük',
+        'Medium':'Orta',
+        'High':'Yüksek',
+    },
 }
 def tr_val(col, eng): return VALUE_TR.get(col, {}).get(eng, eng)
 def rev_val(col, turkce):
@@ -114,6 +157,7 @@ def build_input_for(col):
         return None
     lbl = tr(col); low = col.lower()
 
+    # Tüm kategorik kolonlar artık dropdown
     if col in label_encoders:
         eng = list(label_encoders[col].classes_)
         turkish = [tr_val(col, c) for c in eng]
@@ -121,8 +165,6 @@ def build_input_for(col):
 
     if 'comparison' in low or 'trigger' in low:
         return gr.Slider(0, 1, value=0.5, step=0.05, label=lbl)
-    if 'age' in low and 'usage' not in low:
-        return gr.Slider(13, 80, value=22, step=1, label=lbl)
     if 'sleep' in low:
         return gr.Slider(0, 14, value=7, step=0.5, label=lbl)
     if 'screen_time' in low or 'hour' in low:
@@ -168,7 +210,6 @@ def sleep_status(hours):
     return "🟡 Fazla", "#84cc16", "9 saatten fazla uyku da yorgunluk yapabilir."
 
 def get_personalized_recommendations(values, level):
-    """Kullanıcı verilerine göre kişiselleştirilmiş öneri listesi üretir."""
     recs = []
     screen = float(values.get('Daily_Screen_Time_Hours', 0))
     night  = float(values.get('Late_Night_Usage', 0))
@@ -179,7 +220,7 @@ def get_personalized_recommendations(values, level):
 
     if screen > 6:
         recs.append(("⏱️", "Ekran süresi limiti",
-                    f"Şu an günlük {screen:.1f} saat. Hedef 3 saat. Telefonun ekran süresi limit özelliğini aç."))
+                    f"Şu an günlük {screen:.1f} saat. Hedef 3 saat. Telefonunda ekran süresi limit özelliğini aç."))
     elif screen > 4:
         recs.append(("⏱️", "Ekran süresi takibi",
                     f"{screen:.1f} saat ortalamanın üstünde. Haftalık raporları kontrol et."))
@@ -231,7 +272,7 @@ def get_personalized_recommendations(values, level):
     return recs
 
 # ─────────────────────────────────────────
-# Tahmin (multi-modal)
+# Tahmin
 # ─────────────────────────────────────────
 LEVELS = {
     1: ("#10b981", "✅ Sağlıklı",            "Kullanımın dengeli. Mevcut alışkanlıklarını koru!"),
@@ -244,13 +285,15 @@ LEVEL_NAMES  = ['Sağlıklı', 'Dikkatli', 'Risk', 'Bağımlılık Başlıyor', 
 LEVEL_COLORS = ['#10b981', '#84cc16', '#f59e0b', '#ef4444', '#991b1b']
 
 def predict(user_text, *args):
-    # 1. Tabular değerleri topla
     kullanici = []
     values_dict = {}
     for col, val in zip(feature_cols, args):
         if col in label_encoders:
             eng = rev_val(col, val)
-            encoded = float(label_encoders[col].transform([eng])[0])
+            try:
+                encoded = float(label_encoders[col].transform([eng])[0])
+            except ValueError:
+                encoded = 0.0
             kullanici.append(encoded)
             values_dict[col] = eng
         else:
@@ -259,9 +302,8 @@ def predict(user_text, *args):
 
     veri_tab = scaler.transform([kullanici])
 
-    # 2. Metin tokenize
+    # Metin tokenize
     if not user_text or not user_text.strip():
-        # Boş input → tüm padding (LSTM hiçbir şey görmez)
         veri_text = np.zeros((1, MAX_SEQ_LEN), dtype='int32')
         text_for_display = ""
     else:
@@ -270,21 +312,17 @@ def predict(user_text, *args):
                                    padding='post', truncating='post')
         text_for_display = user_text.strip()
 
-    # 3. Tahmin
     logits = model.predict([veri_tab, veri_text], verbose=0)[0]
-
-    # Temperature smoothing
     temperature = 1.5
     softened = np.exp(np.log(logits + 1e-9) / temperature)
     probs = softened / softened.sum()
     seviye = int(np.argmax(probs)) + 1
     color, label, _ = LEVELS[seviye]
 
-    # 4. Genişletilmiş rapor
     return build_report(seviye, probs, values_dict, text_for_display, color, label)
 
 # ─────────────────────────────────────────
-# RUH SAĞLIĞI RAPORU (genişletilmiş)
+# RUH SAĞLIĞI RAPORU
 # ─────────────────────────────────────────
 def build_report(seviye, probs, values, user_text, color, label):
     gad    = float(values.get('GAD_7_Score', 0))
@@ -298,7 +336,6 @@ def build_report(seviye, probs, values, user_text, color, label):
     screen_lbl, screen_color = screen_status(screen)
     sleep_lbl, sleep_color, _ = sleep_status(sleep)
 
-    # Olasılık çubukları
     bars = ""
     for i, (name, c) in enumerate(zip(LEVEL_NAMES, LEVEL_COLORS)):
         pct = probs[i] * 100
@@ -316,7 +353,6 @@ def build_report(seviye, probs, values, user_text, color, label):
           </div>
         </div>"""
 
-    # Belirti analizi (GAD-7 + PHQ-9)
     symptoms_html = f"""
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
       <div style="background:white;border-left:3px solid {gad_color};padding:12px 14px;border-radius:8px;">
@@ -334,7 +370,6 @@ def build_report(seviye, probs, values, user_text, color, label):
     </div>
     """
 
-    # Davranış örüntüsü
     behavior_html = f"""
     <div style="background:white;border-radius:10px;padding:14px 16px;margin-bottom:16px;">
       <div style="font-size:13px;color:#0f172a;margin-bottom:10px;font-weight:700;">📊 Davranış Örüntüsü</div>
@@ -353,7 +388,6 @@ def build_report(seviye, probs, values, user_text, color, label):
     </div>
     """
 
-    # Kullanıcı metni (LSTM ile analiz edildi)
     text_html = ""
     if user_text:
         text_html = f"""
@@ -365,7 +399,6 @@ def build_report(seviye, probs, values, user_text, color, label):
         </div>
         """
 
-    # Kişiselleştirilmiş öneriler
     recs = get_personalized_recommendations(values, seviye)
     recs_html = '<div style="margin-bottom:16px;"><div style="font-size:13px;color:#0f172a;margin-bottom:10px;font-weight:700;">🎯 Kişiselleştirilmiş Öneriler</div>'
     for icon, title, desc in recs:
@@ -380,7 +413,6 @@ def build_report(seviye, probs, values, user_text, color, label):
         </div>"""
     recs_html += '</div>'
 
-    # Profesyonel destek uyarısı (sadece yüksek riskte göster)
     pro_html = ""
     if seviye >= 4 or gad >= 15 or phq >= 15:
         pro_html = """
@@ -394,7 +426,6 @@ def build_report(seviye, probs, values, user_text, color, label):
         </div>
         """
 
-    # Tam rapor
     return f"""
     <div style="background:linear-gradient(135deg,#fafbff 0%,#f1f5f9 100%);
                 border-radius:20px;padding:22px;
@@ -470,7 +501,7 @@ def section_header(title, color, desc):
 # ─────────────────────────────────────────
 # Arayüz
 # ─────────────────────────────────────────
-with gr.Blocks(title="Sosyal Medya Bağımlılık Dedektörü v2", css=css,
+with gr.Blocks(title="Sosyal Medya Bağımlılık Dedektörü v3", css=css,
                theme=gr.themes.Soft(primary_hue="violet", neutral_hue="slate")) as demo:
 
     gr.HTML("""
@@ -494,7 +525,6 @@ with gr.Blocks(title="Sosyal Medya Bağımlılık Dedektörü v2", css=css,
     </div>
     """)
 
-    # Kolonları gruplara ayır
     grouped = {'demografik': [], 'kullanim': [], 'psikolojik': [], 'yasam': []}
     for col in feature_cols:
         grouped[categorize(col)].append(col)
@@ -515,7 +545,6 @@ with gr.Blocks(title="Sosyal Medya Bağımlılık Dedektörü v2", css=css,
                             if comp is not None:
                                 inputs_map[col] = comp
 
-            # ─── YENİ: Metin girişi (LSTM branch) ───
             gr.HTML(section_header(
                 "💬 Bu Hafta Nasıl Hissettin?", "#8b5cf6",
                 "Birkaç cümleyle yaz — yapay zeka duygularını LSTM ile analiz edecek."
@@ -552,7 +581,6 @@ with gr.Blocks(title="Sosyal Medya Bağımlılık Dedektörü v2", css=css,
               </div>
             </div>""")
 
-    # Inputs sırası: önce text, sonra tabular feature_cols sırası
     ordered_tab_inputs = [inputs_map[col] for col in feature_cols if col in inputs_map]
     btn.click(fn=predict, inputs=[text_input] + ordered_tab_inputs, outputs=result)
 
