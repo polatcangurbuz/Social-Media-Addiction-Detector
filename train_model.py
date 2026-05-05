@@ -1,7 +1,17 @@
 """
-Sosyal Medya Bağımlılık Dedektörü — Model Eğitim Pipeline'ı
-============================================================
-Kaggle veri seti: "Social Media & Mental Health"
+Sosyal Medya Bağımlılık Dedektörü — Model Eğitim Pipeline'ı (v2)
+================================================================
+YENİLİKLER (v2):
+  ✨ Multi-modal mimari: Tabular MLP + Text LSTM branch
+  ✨ Sentetik metin verisi (her seviyeye uygun "haftalık his" cümleleri)
+  ✨ NLP pipeline (Tokenizer + Embedding + LSTM)
+  ✨ Late fusion: iki branch concat ile birleştirilip ortak sınıflandırma
+
+Mimari:
+    [Tabular] → Dense → BN → ReLU → Dropout → Dense → BN → ReLU → Dropout ─┐
+                                                                            ├→ Concat → Dense → Softmax
+    [Text]    → Embedding → LSTM → Dense → Dropout ────────────────────────┘
+
 Çalıştırma: python train_model.py
 """
 
@@ -16,6 +26,8 @@ from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.utils.class_weight import compute_class_weight
 import tensorflow as tf
 from tensorflow.keras import layers, callbacks
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -25,25 +37,97 @@ OUTPUT_DIR = '/kaggle/working' if os.path.exists('/kaggle/working') else '.'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ─────────────────────────────────────────
+# NLP Hyperparametreleri
+# ─────────────────────────────────────────
+MAX_SEQ_LEN = 30      # bir cümle yaklaşık 30 token
+VOCAB_SIZE  = 3000    # vocabulary
+EMBED_DIM   = 64      # embedding boyutu
+LSTM_UNITS  = 32      # LSTM gizli birim sayısı
+
+# ─────────────────────────────────────────
+# SENTETİK METİN ŞABLONLARI (her seviye için)
+# ─────────────────────────────────────────
+TEXT_TEMPLATES = {
+    1: [  # Sağlıklı
+        "Bu hafta kendimi enerjik hissettim ve dinç uyandım",
+        "Sosyal medyayı sadece arkadaşlarımla iletişim için kullandım",
+        "Hafta sonu doğa yürüyüşü yaptım çok keyifliydi",
+        "Telefonsuz vakit geçirmek bana iyi geliyor",
+        "Spor ve kitap okumak rutinim oldu memnunum",
+        "Uykum düzenli sabahları dinç kalkıyorum",
+        "Hayatımdan memnunum kendime zaman ayırıyorum",
+        "Arkadaşlarımla yüz yüze görüştüm çok mutluyum",
+        "Hobilerime zaman ayırdım üretken bir hafta geçirdim",
+        "Telefonu sınırlı kullandım odaklanmam arttı",
+    ],
+    2: [  # Dikkatli
+        "Bazen telefondan kopamadığımı fark ediyorum",
+        "Akşamları biraz fazla scroll yapıyorum farkındayım",
+        "Genel olarak iyiyim ama ara sıra yoruluyorum",
+        "Sosyal medya kullanımımı biraz azaltmak istiyorum",
+        "Uyku saatim son zamanlarda kaymış olabilir",
+        "Çalışırken telefon dikkatimi dağıtıyor bazen",
+        "Bildirimleri kapatmayı düşünüyorum yardımcı olabilir",
+        "Genelde dengeli ama bazı günler aşırıya kaçıyorum",
+        "Ara sıra ekran sürem beni şaşırtıyor",
+    ],
+    3: [  # Risk
+        "Telefonu elime aldığımda saatler nasıl geçiyor anlamıyorum",
+        "Sürekli bildirimleri ve mesajları kontrol ediyorum",
+        "Kendimi başkalarıyla karşılaştırıyorum kötü hissediyorum",
+        "Konsantrasyonum düşük dikkatim çabuk dağılıyor",
+        "Geceleri yatakta saatlerce telefonla vakit geçiriyorum",
+        "Ara ara anksiyete ve huzursuzluk hissediyorum",
+        "Ekran süresi raporumu görünce gerçekten şaşırıyorum",
+        "Verimim düştü işleri ertelemeye başladım",
+        "Uykum kötüleşti sürekli yorgun hissediyorum",
+    ],
+    4: [  # Bağımlılık başlıyor
+        "Telefonsuz duramıyorum sürekli kontrol etmem gerekiyor",
+        "Uykum çok bozuldu geceleri zor uyuyabiliyorum",
+        "Sosyal medyada kendimi yetersiz ve eksik hissediyorum",
+        "Verimim ciddi düştü işlerimi yetiştiremiyorum",
+        "Sürekli kaygılıyım dinlenemiyorum kafam dağınık",
+        "FOMO yüzünden telefonu bir an bile bırakamıyorum",
+        "İlişkilerim etkilenmeye başladı ailem şikayet ediyor",
+        "Telefonu elimden alsalar paniğe kapılırdım sanırım",
+        "Sabahları yorgun kalkıyorum keyifsizim",
+    ],
+    5: [  # Ciddi
+        "Hayattan zevk almıyorum sürekli telefondayım",
+        "Bütün gece scroll ediyorum uyuyamıyorum perişanım",
+        "Kendimi değersiz ve yalnız hissediyorum",
+        "Yardıma ihtiyacım olduğunu biliyorum ama duramıyorum",
+        "İlişkilerim bozuldu kimseyle görüşmüyorum izole hissediyorum",
+        "Depresyondayım hiçbir şey yapasım gelmiyor sadece telefon",
+        "Ekrandan ayrılınca panik atak gibi oluyorum",
+        "Günlerimi kaybediyorum farkındayım ama elim kolum bağlı",
+        "Hayatımın kontrolünü kaybettim profesyonel destek lazım",
+    ],
+}
+
+def generate_text_for_level(level, rng):
+    """Verilen seviyeye uygun 1-2 cümleyi rastgele birleştirir."""
+    templates = TEXT_TEMPLATES[int(level)]
+    n = rng.choice([1, 2])
+    selected = rng.choice(templates, size=n, replace=False)
+    return " ".join(selected)
+
+# ─────────────────────────────────────────
 # Klinik Tabanlı Bağımlılık Skoru
 # ─────────────────────────────────────────
 def compute_addiction_score(df):
-    """
-    DSM-5 esinli + davranışsal faktörler.
-    Not: Age, bu veri setinin yaş aralığı dar olduğu için formülde kullanılmaz.
-    """
+    """DSM-5 esinli + davranışsal faktörlerden toplam skor üretir."""
     def norm(series, max_val, invert=False):
         v = np.clip(series / max_val, 0, 1)
         return 1 - v if invert else v
 
-    # Ana sinyaller
     screen = norm(df['Daily_Screen_Time_Hours'], 10)
     night  = norm(df['Late_Night_Usage'], 5)
     gad    = norm(df['GAD_7_Score'], 21)
     phq    = norm(df['PHQ_9_Score'], 27)
     sleep_risk = norm(df['Sleep_Duration_Hours'], 10, invert=True)
 
-    # Kategorik mapping'ler
     archetype_risk = df['User_Archetype'].map({
         'Hyper-Connected': 1.0, 'Passive Scroller': 0.7,
         'Average User': 0.5, 'Digital Minimalist': 0.1,
@@ -61,11 +145,9 @@ def compute_addiction_score(df):
 
     comparison_risk = df['Social_Comparison_Trigger'].astype(float).clip(0, 1)
 
-    # Non-lineer etkileşimler
     compound_risk = screen * (gad + phq) / 2
     sleep_mental  = sleep_risk * (gad + phq) / 2
 
-    # Ağırlıklı toplam — age kaldırıldı, diğer ağırlıklar yeniden dengelendi
     raw = (
         screen          * 0.18 +
         night           * 0.12 +
@@ -81,254 +163,287 @@ def compute_addiction_score(df):
     )
 
     noise = np.random.RandomState(42).normal(0, 0.03, len(raw))
-    raw = np.clip(raw + noise, 0, 1)
-    return raw
+    return np.clip(raw + noise, 0, 1)
 
 # ─────────────────────────────────────────
-# 1. SENTETİK VERİ ÜRET (Kaggle'da yoksa)
+# Sentetik Veri (Kaggle formatında)
 # ─────────────────────────────────────────
-def generate_synthetic_data(n=600):
-    """
-    Gerçek Kaggle verisi yoksa sentetik veri üretir.
-    Kaggle'dan indirilen CSV varsa bu fonksiyonu atlayın.
-    """
+def generate_synthetic_data(n=800):
+    """compute_addiction_score ile uyumlu sentetik veri üretir."""
     np.random.seed(42)
-    
-    records = []
-    for _ in range(n):
-        # Bağımlılık seviyesi 1-5 (dengeli dağılım)
-        addiction = np.random.choice([1, 2, 3, 4, 5], p=[0.15, 0.20, 0.25, 0.22, 0.18])
-        
-        # Özellikleri bağımlılık seviyesine göre oluştur
-        base = addiction / 5.0  # 0.2 → 1.0 arasında normalize baz
-        
-        record = {
-            # Demografik
-            'age':              int(np.clip(np.random.normal(22 + addiction, 5), 13, 60)),
-            'gender':           np.random.choice(['Male', 'Female', 'Non-binary'], p=[0.45, 0.45, 0.10]),
-            'relationship':     np.random.choice(['Single', 'In relationship', 'Married'], p=[0.5, 0.35, 0.15]),
-            'occupation':       np.random.choice(['Student', 'Employee', 'Freelancer', 'Unemployed'], p=[0.45, 0.30, 0.15, 0.10]),
-            
-            # Kullanım alışkanlıkları
-            'daily_hours':      float(np.clip(np.random.normal(1 + addiction * 1.2, 0.8), 0.5, 10)),
-            'platforms_count':  int(np.clip(np.random.normal(1 + addiction, 1), 1, 8)),
-            'checks_per_day':   int(np.clip(np.random.normal(5 + addiction * 8, 5), 1, 80)),
-            'night_usage':      int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
-            
-            # Psikolojik göstergeler
-            'fomo_score':       int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
-            'distraction':      int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
-            'restlessness':     int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
-            'anxiety':          int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
-            'depression':       int(np.clip(np.random.normal(base * 3.5, 1), 1, 5)),
-            'self_comparison':  int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
-            'validation_seek':  int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
-            
-            # Uyku & günlük hayat
-            'sleep_issues':     int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
-            'productivity_loss':int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
-            'relationship_harm':int(np.clip(np.random.normal(base * 3, 1), 1, 5)),
-            'purpose_less':     int(np.clip(np.random.normal(base * 4, 1), 1, 5)),
-            
-            # Hedef
-            'addiction_score': addiction
-        }
-        records.append(record)
-    
-    df = pd.DataFrame(records)
-    df.to_csv('social_media_usage.csv', index=False)
-    print(f"✅ {n} satırlık sentetik veri oluşturuldu → social_media_usage.csv")
+    rng = np.random.default_rng(42)
+
+    rows = []
+    for i in range(n):
+        archetype = rng.choice(
+            ['Hyper-Connected', 'Passive Scroller', 'Average User', 'Digital Minimalist'],
+            p=[0.20, 0.30, 0.35, 0.15]
+        )
+        af = {'Hyper-Connected': 0.9, 'Passive Scroller': 0.65,
+              'Average User': 0.45, 'Digital Minimalist': 0.15}[archetype]
+
+        rows.append({
+            'User_ID': f'U{i:05d}',
+            'Age': int(np.clip(np.random.normal(25, 7), 13, 60)),
+            'Gender': rng.choice(['Male', 'Female', 'Non-binary'], p=[0.45, 0.45, 0.10]),
+            'Daily_Screen_Time_Hours': float(np.clip(np.random.normal(1 + af * 8, 1.5), 0.5, 12)),
+            'Late_Night_Usage': int(np.clip(np.random.normal(1 + af * 4, 1), 1, 5)),
+            'GAD_7_Score': int(np.clip(np.random.normal(af * 18, 4), 0, 21)),
+            'PHQ_9_Score': int(np.clip(np.random.normal(af * 22, 5), 0, 27)),
+            'Sleep_Duration_Hours': float(np.clip(np.random.normal(8.5 - af * 4, 1), 3, 10)),
+            'User_Archetype': archetype,
+            'Dominant_Content_Type': rng.choice([
+                'Entertainment/Comedy', 'Lifestyle/Fashion', 'Gaming',
+                'News/Politics', 'Self-Help/Motivation', 'Educational/Tech'
+            ]),
+            'Primary_Platform': rng.choice(
+                ['Instagram', 'TikTok', 'Twitter', 'YouTube', 'Facebook']
+            ),
+            'Activity_Type': 'Passive' if af > 0.6 else rng.choice(['Active', 'Passive']),
+            'Social_Comparison_Trigger': float(np.clip(np.random.normal(af, 0.2), 0, 1)),
+        })
+
+    df = pd.DataFrame(rows)
+    df.to_csv('social_media_synthetic.csv', index=False)
+    print(f"✅ {n} satırlık sentetik veri üretildi → social_media_synthetic.csv")
     return df
 
-
 # ─────────────────────────────────────────
-# 2. VERİ YÜKLEME & ÖN İŞLEME
+# Veri Yükleme & Ön İşleme (Multi-modal)
 # ─────────────────────────────────────────
 def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/social-media-and-mental-health/social_media_mental_health.csv'):
     if not os.path.exists(csv_path):
-        print("📊 CSV bulunamadı, sentetik veri üretiliyor...")
+        print("📊 Kaggle CSV bulunamadı, sentetik veri üretiliyor...")
         df = generate_synthetic_data()
     else:
         df = pd.read_csv(csv_path)
-        print(f"✅ Veri yüklendi: {df.shape[0]} satır, {df.shape[1]} sütun")
-    
-    # ─────────────────────────────────────────
-    # 🧠 1. ADDICTION SCORE OLUŞTUR
-    # ─────────────────────────────────────────
-    df['addiction_score_raw'] = compute_addiction_score(df)
+        print(f"✅ Veri yüklendi: {df.shape}")
 
+    # 1. Bağımlılık skoru
+    df['addiction_score_raw'] = compute_addiction_score(df)
     df['addiction_score'] = pd.qcut(
-        df['addiction_score_raw'], 5, labels=[1,2,3,4,5]
+        df['addiction_score_raw'], 5, labels=[1, 2, 3, 4, 5]
     ).astype(int)
 
     print("\n📋 Addiction score dağılımı:")
     print(df['addiction_score'].value_counts().sort_index())
 
-    # ─────────────────────────────────────────
-    # 🧹 2. GEREKSİZ KOLONLARI SİL
-    # ─────────────────────────────────────────
-    # Gereksiz kolonları sil
+    # 2. Sentetik METİN üret (her satıra seviyesine uygun cümle)
+    print("\n📝 Sentetik metin verisi üretiliyor...")
+    rng = np.random.default_rng(42)
+    df['user_text'] = df['addiction_score'].apply(
+        lambda lvl: generate_text_for_level(int(lvl), rng)
+    )
+    print(f"   Örnek (seviye 1): \"{df[df['addiction_score']==1]['user_text'].iloc[0]}\"")
+    print(f"   Örnek (seviye 5): \"{df[df['addiction_score']==5]['user_text'].iloc[0]}\"")
+
+    # 3. Metni ayır (tabular pipeline'ı etkilemesin)
+    texts = df['user_text'].values
+    df = df.drop(columns=['user_text'])
+
+    # 4. Gereksiz kolonları sil
     drop_cols = ['User_ID', 'Age', 'GAD_7_Severity', 'PHQ_9_Severity', 'addiction_score_raw']
     for col in drop_cols:
         if col in df.columns:
             df = df.drop(columns=[col])
 
-    # ─────────────────────────────────────────
-    # 🔤 KATEGORİK ENCODE
-    # ─────────────────────────────────────────
-    # One-hot encoding yapılacak kolonlar (ordinal ilişki YOK)
-    one_hot_cols = ['Dominant_Content_Type', 'Primary_Platform']
-    one_hot_cols = [c for c in one_hot_cols if c in df.columns]
+    # 5. Kategorik encoding
+    one_hot_cols = [c for c in ['Dominant_Content_Type', 'Primary_Platform'] if c in df.columns]
     if one_hot_cols:
         df = pd.get_dummies(df, columns=one_hot_cols, prefix=one_hot_cols, dtype=float)
-    
-    # Label encoding yapılacak kolonlar (ordinal mantık var veya binary)
+
     label_encoders = {}
-    cat_cols = df.select_dtypes(include='object').columns
-    for col in cat_cols:
+    for col in df.select_dtypes(include='object').columns:
         le = LabelEncoder()
         df[col] = le.fit_transform(df[col].astype(str))
         label_encoders[col] = le
 
-    # ─────────────────────────────────────────
-    # 🎯 4. FEATURE / TARGET AYIR
-    # ─────────────────────────────────────────
+    # 6. Feature/target ayır
     target_col = 'addiction_score'
     feature_cols = [c for c in df.columns if c != target_col]
-
-    X = df[feature_cols].values.astype(np.float32)
+    X_tab = df[feature_cols].values.astype(np.float32)
     y = (df[target_col].values - 1).astype(np.int32)
 
-    # ─────────────────────────────────────────
-    # ✂️ 5. TRAIN / TEST SPLIT (önce ham veri ile)
-    # ─────────────────────────────────────────
-    X_train_raw, X_test_raw, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
+    # 7. Tokenize text
+    tokenizer = Tokenizer(num_words=VOCAB_SIZE, oov_token='<OOV>')
+    tokenizer.fit_on_texts(texts)
+    sequences = tokenizer.texts_to_sequences(texts)
+    X_text = pad_sequences(sequences, maxlen=MAX_SEQ_LEN, padding='post', truncating='post')
+    print(f"\n📝 Vocabulary size: {len(tokenizer.word_index)}")
+    print(f"   Sequence shape: {X_text.shape}")
+
+    # 8. Train/test split (her iki input'u senkron böl)
+    indices = np.arange(len(y))
+    train_idx, test_idx = train_test_split(
+        indices, test_size=0.2, random_state=42, stratify=y
     )
+    X_train_tab_raw = X_tab[train_idx]
+    X_test_tab_raw  = X_tab[test_idx]
+    X_train_text    = X_text[train_idx]
+    X_test_text     = X_text[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
 
-    # ─────────────────────────────────────────
-    # ⚖️ 6. SCALE (sadece train'e fit — leakage önlenir)
-    # ─────────────────────────────────────────
+    # 9. Scale (sadece tabular)
     scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train_raw)
-    X_test  = scaler.transform(X_test_raw)
+    X_train_tab = scaler.fit_transform(X_train_tab_raw)
+    X_test_tab  = scaler.transform(X_test_tab_raw)
 
-    print(f"\n📐 Özellik sayısı: {X.shape[1]}")
-    print(f"🎓 Train: {X_train.shape[0]}, Test: {X_test.shape[0]}")
+    print(f"\n📐 Tabular özellik sayısı: {X_tab.shape[1]}")
+    print(f"🎓 Train: {len(y_train)}, Test: {len(y_test)}")
 
-    # ─────────────────────────────────────────
-    # 💾 7. KAYDET
-    # ─────────────────────────────────────────
+    # 10. Artifacts'ı kaydet (inference için gerekli)
     with open(f'{OUTPUT_DIR}/scaler.pkl', 'wb') as f:
         pickle.dump(scaler, f)
     with open(f'{OUTPUT_DIR}/label_encoders.pkl', 'wb') as f:
         pickle.dump(label_encoders, f)
+    with open(f'{OUTPUT_DIR}/tokenizer.pkl', 'wb') as f:
+        pickle.dump(tokenizer, f)
     with open(f'{OUTPUT_DIR}/feature_cols.json', 'w') as f:
         json.dump(feature_cols, f)
+    with open(f'{OUTPUT_DIR}/config.json', 'w') as f:
+        json.dump({
+            'max_seq_len': MAX_SEQ_LEN,
+            'vocab_size': VOCAB_SIZE,
+            'embed_dim': EMBED_DIM,
+            'lstm_units': LSTM_UNITS,
+            'tab_input_dim': X_tab.shape[1],
+        }, f)
 
-    return (X_train, X_test, y_train, y_test,
-            X_test_raw, feature_cols, label_encoders, X.shape[1])
-
+    return {
+        'X_train_tab': X_train_tab, 'X_test_tab': X_test_tab,
+        'X_train_text': X_train_text, 'X_test_text': X_test_text,
+        'X_test_tab_raw': X_test_tab_raw,
+        'y_train': y_train, 'y_test': y_test,
+        'feature_cols': feature_cols, 'label_encoders': label_encoders,
+        'tokenizer': tokenizer,
+        'tab_input_dim': X_tab.shape[1],
+    }
 
 # ─────────────────────────────────────────
-# 3. MODEL MİMARİSİ
+# MULTI-MODAL MODEL (Tabular MLP + Text LSTM)
 # ─────────────────────────────────────────
-def build_model(input_dim, num_classes=5):
+def build_model(tab_input_dim, num_classes=5):
     """
-    Küçültülmüş + L2 regularize edilmiş model.
-    Bu veri boyutu için daha uygun bir kapasite.
+    İki dallı (multi-modal) derin ağ:
+
+    Tabular branch:
+      Dense(64) → BN → ReLU → Dropout(0.4)
+      Dense(32) → BN → ReLU → Dropout(0.3)
+      → 32-d temsil
+
+    Text branch:
+      Embedding(3000, 64, mask_zero=True)
+      LSTM(32, dropout, recurrent_dropout)
+      Dense(16, ReLU) → Dropout(0.3)
+      → 16-d temsil
+
+    Fusion:
+      Concat(48) → Dense(32, ReLU) → Dropout(0.3)
+      → Dense(5, softmax)
     """
-    inputs = tf.keras.Input(shape=(input_dim,), name='input')
-    
-    x = layers.Dense(
-        64,
-        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-        name='dense_1'
-    )(inputs)
-    x = layers.BatchNormalization(name='bn_1')(x)
-    x = layers.Activation('relu')(x)
-    x = layers.Dropout(0.4, name='drop_1')(x)   # 0.3 → 0.4
-    
-    x = layers.Dense(
-        32,
-        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-        name='dense_2'
-    )(x)
-    x = layers.BatchNormalization(name='bn_2')(x)
-    x = layers.Activation('relu')(x)
-    x = layers.Dropout(0.3, name='drop_2')(x)
-    
-    outputs = layers.Dense(num_classes, activation='softmax', name='output')(x)
-    
-    model = tf.keras.Model(inputs, outputs, name='SocialMediaAddictionDetector')
-    
+
+    # ── TABULAR BRANCH (MLP) ──────────────
+    tab_in = layers.Input(shape=(tab_input_dim,), name='tabular_input')
+    t = layers.Dense(64, kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+                     name='tab_dense_1')(tab_in)
+    t = layers.BatchNormalization(name='tab_bn_1')(t)
+    t = layers.Activation('relu', name='tab_relu_1')(t)
+    t = layers.Dropout(0.4, name='tab_drop_1')(t)
+
+    t = layers.Dense(32, kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+                     name='tab_dense_2')(t)
+    t = layers.BatchNormalization(name='tab_bn_2')(t)
+    t = layers.Activation('relu', name='tab_relu_2')(t)
+    t = layers.Dropout(0.3, name='tab_drop_2')(t)
+
+    # ── TEXT BRANCH (Embedding + LSTM) ────
+    text_in = layers.Input(shape=(MAX_SEQ_LEN,), name='text_input', dtype='int32')
+    e = layers.Embedding(VOCAB_SIZE, EMBED_DIM, mask_zero=True,
+                          name='embedding')(text_in)
+    e = layers.LSTM(LSTM_UNITS, dropout=0.2, recurrent_dropout=0.2,
+                     name='lstm')(e)
+    e = layers.Dense(16, activation='relu',
+                      kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+                      name='text_dense')(e)
+    e = layers.Dropout(0.3, name='text_drop')(e)
+
+    # ── FUSION ────────────────────────────
+    merged = layers.Concatenate(name='concat')([t, e])
+    x = layers.Dense(32, activation='relu',
+                     kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+                     name='fusion_dense')(merged)
+    x = layers.Dropout(0.3, name='fusion_drop')(x)
+    output = layers.Dense(num_classes, activation='softmax', name='output')(x)
+
+    model = tf.keras.Model([tab_in, text_in], output,
+                           name='MultiModal_AddictionDetector')
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=5e-4),  # 1e-3 → 5e-4
+        optimizer=tf.keras.optimizers.Adam(learning_rate=5e-4),
         loss='sparse_categorical_crossentropy',
         metrics=['accuracy']
     )
-    
     return model
 
-
 # ─────────────────────────────────────────
-# 4. EĞİTİM
+# EĞİTİM
 # ─────────────────────────────────────────
-def train(model, X_train, y_train, epochs=80):
-    # Class weight hesapla — dengesizlik varsa az olan sınıflara daha fazla önem ver
+def train(model, data, epochs=80):
     class_weights = compute_class_weight(
-        'balanced', classes=np.unique(y_train), y=y_train
+        'balanced', classes=np.unique(data['y_train']), y=data['y_train']
     )
     class_weight_dict = dict(enumerate(class_weights))
     print(f"\n📊 Class weights: {class_weight_dict}")
 
     cb_list = [
-        callbacks.EarlyStopping(
-            monitor='val_loss', patience=12,
-            restore_best_weights=True, verbose=1
-        ),
-        callbacks.ReduceLROnPlateau(
-            monitor='val_loss', factor=0.5,
-            patience=6, min_lr=1e-5, verbose=1
-        ),
-        callbacks.ModelCheckpoint(
-            f'{OUTPUT_DIR}/best_model.keras', monitor='val_accuracy',
-            save_best_only=True, verbose=0
-        )
+        callbacks.EarlyStopping(monitor='val_loss', patience=12,
+                                restore_best_weights=True, verbose=1),
+        callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5,
+                                     patience=6, min_lr=1e-5, verbose=1),
+        callbacks.ModelCheckpoint(f'{OUTPUT_DIR}/best_model.keras',
+                                   monitor='val_accuracy',
+                                   save_best_only=True, verbose=0)
     ]
-    
+
     history = model.fit(
-        X_train, y_train,
+        [data['X_train_tab'], data['X_train_text']], data['y_train'],
         validation_split=0.2,
         epochs=epochs,
         batch_size=32,
         callbacks=cb_list,
-        class_weight=class_weight_dict,   # ← yeni
+        class_weight=class_weight_dict,
         verbose=1
     )
     return history
 
+# ─────────────────────────────────────────
+# DEĞERLENDİRME & GRAFİK
+# ─────────────────────────────────────────
+def evaluate_and_plot(model, history, data):
+    X_test_tab  = data['X_test_tab']
+    X_test_text = data['X_test_text']
+    y_test      = data['y_test']
 
-# ─────────────────────────────────────────
-# 5. DEĞERLENDİRME & GRAFİKLER
-# ─────────────────────────────────────────
-def evaluate_and_plot(model, history, X_test, y_test):
-    # Test doğruluğu
-    loss, acc = model.evaluate(X_test, y_test, verbose=0)
+    loss, acc = model.evaluate([X_test_tab, X_test_text], y_test, verbose=0)
     print(f"\n🎯 Test Accuracy: {acc:.4f} ({acc*100:.1f}%)")
     print(f"📉 Test Loss: {loss:.4f}")
-    
-    # Tahminler
-    y_pred = np.argmax(model.predict(X_test, verbose=0), axis=1)
-    
+
+    y_pred = np.argmax(model.predict([X_test_tab, X_test_text], verbose=0), axis=1)
+
     labels = ['Sağlıklı', 'Dikkatli', 'Risk', 'Bağımlılık Başlıyor', 'Ciddi Bağımlılık']
     print("\n📊 Sınıflandırma Raporu:")
     print(classification_report(y_test, y_pred, target_names=labels))
-    
+
+    # Branch ablation - text branch'in katkısını ölç
+    print("\n🔬 Branch Ablation Testi:")
+    zero_text = np.zeros_like(X_test_text)
+    _, acc_no_text = model.evaluate([X_test_tab, zero_text], y_test, verbose=0)
+    print(f"   Tam model:           {acc:.4f}")
+    print(f"   Text branch kapalı:  {acc_no_text:.4f}")
+    print(f"   LSTM katkısı:        {(acc - acc_no_text)*100:+.2f}%")
+
     # Grafik
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     fig.patch.set_facecolor('#0f0f1a')
-    
     for ax in axes:
         ax.set_facecolor('#1a1a2e')
         ax.tick_params(colors='#aaaacc')
@@ -336,226 +451,100 @@ def evaluate_and_plot(model, history, X_test, y_test):
         ax.spines['left'].set_color('#333355')
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
-    
-    # Accuracy
+
     axes[0].plot(history.history['accuracy'], color='#7c3aed', linewidth=2, label='Train')
-    axes[0].plot(history.history['val_accuracy'], color='#06b6d4', linewidth=2, linestyle='--', label='Val')
+    axes[0].plot(history.history['val_accuracy'], color='#06b6d4', linewidth=2,
+                 linestyle='--', label='Val')
     axes[0].set_title('Model Accuracy', color='white', fontsize=13, pad=10)
     axes[0].set_xlabel('Epoch', color='#aaaacc')
     axes[0].set_ylabel('Accuracy', color='#aaaacc')
     axes[0].legend(facecolor='#1a1a2e', labelcolor='white')
     axes[0].grid(alpha=0.15, color='#555577')
-    
-    # Loss
+
     axes[1].plot(history.history['loss'], color='#f59e0b', linewidth=2, label='Train')
-    axes[1].plot(history.history['val_loss'], color='#ef4444', linewidth=2, linestyle='--', label='Val')
+    axes[1].plot(history.history['val_loss'], color='#ef4444', linewidth=2,
+                 linestyle='--', label='Val')
     axes[1].set_title('Model Loss', color='white', fontsize=13, pad=10)
     axes[1].set_xlabel('Epoch', color='#aaaacc')
     axes[1].set_ylabel('Loss', color='#aaaacc')
     axes[1].legend(facecolor='#1a1a2e', labelcolor='white')
     axes[1].grid(alpha=0.15, color='#555577')
-    
-    # Confusion matrix
+
     cm = confusion_matrix(y_test, y_pred)
-    sns.heatmap(
-        cm, ax=axes[2],
-        annot=True, fmt='d', cmap='RdPu',
-        xticklabels=['S', 'D', 'R', 'B', 'CB'],
-        yticklabels=['S', 'D', 'R', 'B', 'CB'],
-        cbar=False
-    )
+    sns.heatmap(cm, ax=axes[2], annot=True, fmt='d', cmap='RdPu',
+                xticklabels=['S', 'D', 'R', 'B', 'CB'],
+                yticklabels=['S', 'D', 'R', 'B', 'CB'], cbar=False)
     axes[2].set_title('Confusion Matrix', color='white', fontsize=13, pad=10)
     axes[2].set_xlabel('Tahmin', color='#aaaacc')
     axes[2].set_ylabel('Gerçek', color='#aaaacc')
-    axes[2].tick_params(colors='#aaaacc')
-    
-    plt.suptitle('Sosyal Medya Bağımlılık Dedektörü — Eğitim Sonuçları',
+
+    plt.suptitle('Sosyal Medya Bağımlılık Dedektörü v2 — Multi-modal (MLP + LSTM)',
                  color='white', fontsize=15, y=1.02)
     plt.tight_layout()
     plt.savefig(f'{OUTPUT_DIR}/training_results.png', dpi=150, bbox_inches='tight',
                 facecolor='#0f0f1a', edgecolor='none')
     print("\n📈 Grafik kaydedildi → training_results.png")
-    
     return acc
 
 # ─────────────────────────────────────────
-# FEATURE IMPORTANCE (Permutation)
-# ─────────────────────────────────────────
-def feature_importance(model, X_test, y_test, feature_cols):
-    """
-    Permutation importance + one-hot grupları için group importance.
-    """
-    baseline = model.evaluate(X_test, y_test, verbose=0)[1]
-    importances = []
-    
-    # One-hot gruplarını tespit et
-    one_hot_prefixes = ['Dominant_Content_Type', 'Primary_Platform']
-    groups = {}  # prefix -> [indices]
-    individual_cols = []
-    
-    for i, col in enumerate(feature_cols):
-        matched = False
-        for prefix in one_hot_prefixes:
-            if col.startswith(prefix + '_'):
-                groups.setdefault(prefix, []).append(i)
-                matched = True
-                break
-        if not matched:
-            individual_cols.append((i, col))
-    
-    np.random.seed(42)
-    
-    # Bireysel feature'lar
-    for i, col in individual_cols:
-        X_shuffled = X_test.copy()
-        np.random.shuffle(X_shuffled[:, i])
-        score = model.evaluate(X_shuffled, y_test, verbose=0)[1]
-        importances.append((col, baseline - score))
-    
-    # Gruplar — tüm one-hot kolonlarını birlikte karıştır
-    for prefix, indices in groups.items():
-        X_shuffled = X_test.copy()
-        perm = np.random.permutation(len(X_shuffled))
-        X_shuffled[:, indices] = X_shuffled[perm][:, indices]
-        score = model.evaluate(X_shuffled, y_test, verbose=0)[1]
-        importances.append((f"{prefix} (grup)", baseline - score))
-    
-    importances.sort(key=lambda x: x[1], reverse=True)
-    max_imp = max(abs(x[1]) for x in importances) or 1
-    
-    print("\n" + "═" * 60)
-    print("  🔍 FEATURE IMPORTANCE (Group-aware)")
-    print("═" * 60)
-    print(f"  Baseline accuracy: {baseline:.4f}\n")
-    print(f"  {'Özellik':<40}{'Önem':>10}   Bar")
-    print("  " + "─" * 66)
-    
-    for col, imp in importances:
-        bar_len = int((imp / max_imp) * 25) if imp > 0 else 0
-        bar = '█' * bar_len
-        flag = "  ← önemsiz" if imp < 0.005 else ""
-        print(f"  {col:<40}{imp:>10.4f}   {bar}{flag}")
-    print()
-    return importances
-
-# ─────────────────────────────────────────
-# 6. DEMO FONKSİYONU
-# ─────────────────────────────────────────
-def bagimlilik_skoru(model, scaler, kullanici_verisi: list) -> dict:
-    """
-    Tek kullanıcı tahmini.
-    kullanici_verisi: feature_cols sırasında sayısal değerler
-    """
-    veri = scaler.transform([kullanici_verisi])
-    tahmin_probs = model.predict(veri, verbose=0)[0]
-    seviye = int(np.argmax(tahmin_probs)) + 1
-    
-    etiketler = {
-        1: ("✅ Sağlıklı",           "#22c55e", "Sosyal medya kullanımın dengeli. Böyle devam et!"),
-        2: ("🟡 Dikkatli ol",        "#eab308", "Küçük riskler var. Ekran süresini takip etmeye başla."),
-        3: ("🟠 Risk altında",       "#f97316", "Belirgin bağımlılık işaretleri var. Dijital detoks dene."),
-        4: ("🔴 Bağımlılık başlıyor","#ef4444", "Ciddi uyarı! Uzman desteği faydalı olabilir."),
-        5: ("🚨 Ciddi bağımlılık",   "#dc2626", "Profesyonel destek almanı şiddetle tavsiye ederiz.")
-    }
-    
-    label, color, advice = etiketler[seviye]
-    
-    return {
-        'level': seviye,
-        'label': label,
-        'color': color,
-        'advice': advice,
-        'probabilities': {
-            'Sağlıklı':           float(tahmin_probs[0]),
-            'Dikkatli':           float(tahmin_probs[1]),
-            'Risk':               float(tahmin_probs[2]),
-            'Bağımlılık Başlıyor':float(tahmin_probs[3]),
-            'Ciddi Bağımlılık':   float(tahmin_probs[4])
-        }
-    }
-
-
-# ─────────────────────────────────────────
-# 7. ANA ÇALIŞTIRMA
+# ANA ÇALIŞTIRMA
 # ─────────────────────────────────────────
 if __name__ == '__main__':
-    print("=" * 55)
-    print("  Sosyal Medya Bağımlılık Dedektörü — Model Eğitimi")
-    print("=" * 55)
-    
+    print("=" * 60)
+    print("  Sosyal Medya Bağımlılık Dedektörü v2 — Multi-modal")
+    print("  Mimari: Tabular MLP + Text LSTM → Fusion")
+    print("=" * 60)
+
     # Veri
-    (X_train, X_test, y_train, y_test,
- X_test_raw, feature_cols, label_encoders, input_dim) = load_and_preprocess()
-    
+    data = load_and_preprocess()
+
     # Model
-    model = build_model(input_dim)
+    model = build_model(data['tab_input_dim'])
+    print("\n📐 MODEL ÖZET:")
     model.summary()
-    
+
     # Eğitim
     print("\n🚀 Eğitim başlıyor...")
-    history = train(model, X_train, y_train, epochs=80)
-    
-    # Değerlendirme
-    acc = evaluate_and_plot(model, history, X_test, y_test)
+    history = train(model, data, epochs=80)
 
-    feature_importance(model, X_test, y_test, feature_cols)
-    
+    # Değerlendirme
+    acc = evaluate_and_plot(model, history, data)
+
     # Modeli kaydet
     model.save(f'{OUTPUT_DIR}/addiction_model.keras')
-    print("💾 Model kaydedildi → addiction_model.keras")
-    
+    print(f"💾 Model kaydedildi → {OUTPUT_DIR}/addiction_model.keras")
+
     # Demo test
-    # ───────────── Demo: rastgele bir test örneği seç ─────────────
     print("\n" + "═" * 60)
     print("  🎮 DEMO TEST")
     print("═" * 60)
+    idx = np.random.randint(0, len(data['y_test']))
+    sample_tab  = data['X_test_tab'][idx:idx+1]
+    sample_text = data['X_test_text'][idx:idx+1]
+    true_level  = int(data['y_test'][idx]) + 1
 
-    idx = np.random.randint(0, len(X_test))
-    ornek_scaled   = X_test[idx:idx+1]
-    ornek_original = X_test_raw[idx]
-    gercek_seviye  = int(y_test[idx]) + 1
+    # Reverse tokenize - kullanıcının metnini geri oku
+    reverse_word_index = {v: k for k, v in data['tokenizer'].word_index.items()}
+    decoded_text = " ".join([reverse_word_index.get(i, '') for i in sample_text[0] if i > 0])
 
-    # ───────────── Kullanıcı profilini tablo olarak göster ─────────────
-    print("\n📋 TEST EDİLEN KULLANICI PROFİLİ\n")
+    probs = model.predict([sample_tab, sample_text], verbose=0)[0]
+    pred_level = int(np.argmax(probs)) + 1
 
-    print(f"  {'#':<4}{'Özellik':<32}{'Değer':<20}")
-    print("  " + "─" * 54)
-
-    for i, (col, val) in enumerate(zip(feature_cols, ornek_original), start=1):
-        # Kategorik kolonsa encoded değeri orijinal etikete çevir
-        if col in label_encoders:
-            val_str = label_encoders[col].inverse_transform([int(val)])[0]
-        elif float(val).is_integer():
-            val_str = str(int(val))
-        else:
-            val_str = f"{val:.2f}"
-        print(f"  {i:<4}{col:<32}{val_str:<20}")
-
-    print("  " + "─" * 54)
-
-    # ───────────── Tahmin yap ve sonucu göster ─────────────
-    tahmin_probs = model.predict(ornek_scaled, verbose=0)[0]
-    seviye = int(np.argmax(tahmin_probs)) + 1
-
-    etiketler = {
-        1: ("✅ Sağlıklı",            "Sosyal medya kullanımın dengeli. Böyle devam et!"),
-        2: ("🟡 Dikkatli ol",         "Küçük riskler var. Ekran süresini takip etmeye başla."),
-        3: ("🟠 Risk altında",        "Belirgin bağımlılık işaretleri var. Dijital detoks dene."),
-        4: ("🔴 Bağımlılık başlıyor", "Ciddi uyarı! Uzman desteği faydalı olabilir."),
-        5: ("🚨 Ciddi bağımlılık",    "Profesyonel destek almanı şiddetle tavsiye ederiz.")
-    }
-    label, advice = etiketler[seviye]
-    dogru_mu = "✅ DOĞRU" if seviye == gercek_seviye else "❌ YANLIŞ"
-
-    print(f"\n🎯 Gerçek Seviye : {gercek_seviye} — {etiketler[gercek_seviye][0]}")
-    print(f"🤖 Model Tahmini : {seviye} — {label}")
-    print(f"📌 Sonuç         : {dogru_mu}")
-    print(f"💡 Tavsiye       : {advice}")
+    print(f"\n💬 Kullanıcı metni: \"{decoded_text}\"")
+    print(f"\n🎯 Gerçek Seviye: {true_level}")
+    print(f"🤖 Tahmin:        {pred_level}")
+    print(f"📌 Sonuç:         {'✅ DOĞRU' if pred_level == true_level else '❌ YANLIŞ'}")
 
     print("\n📊 Olasılık Dağılımı:")
-    siniflar = ['Sağlıklı', 'Dikkatli', 'Risk', 'Bağımlılık Başlıyor', 'Ciddi Bağımlılık']
-    for k, v in zip(siniflar, tahmin_probs):
-        bar = '█' * int(v * 30)
-        print(f"  {k:22s} {bar:<30} {v:>6.1%}")
+    levels = ['Sağlıklı', 'Dikkatli', 'Risk', 'Bağımlılık Başlıyor', 'Ciddi Bağımlılık']
+    for lvl, p in zip(levels, probs):
+        bar = '█' * int(p * 30)
+        print(f"  {lvl:22s} {bar:<30} {p:>6.1%}")
 
-    print(f"\n✅ Tüm işlem tamamlandı! Test accuracy: {acc*100:.1f}%")
+    print(f"\n✅ Eğitim tamamlandı! Test accuracy: {acc*100:.1f}%")
+    print(f"\n📁 Üretilen artifacts ({OUTPUT_DIR}/):")
+    for f in ['addiction_model.keras', 'scaler.pkl', 'label_encoders.pkl',
+              'tokenizer.pkl', 'feature_cols.json', 'config.json',
+              'training_results.png']:
+        if os.path.exists(f'{OUTPUT_DIR}/{f}'):
+            print(f"   ✓ {f}")
