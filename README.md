@@ -348,12 +348,12 @@ MIT License — detaylar için [`LICENSE`](LICENSE) dosyasına bakın.
 
 ---
 
-## 👤 Geliştirici
+## 👤 Geliştiriciler
 
 Bu proje Karadeniz Teknik Üniversitesi Yazılım Mühendisliği bölümü Derin Öğrenme dersi kapsamında geliştirilmiştir.
 
-- 📧 E-posta: polatcangurbuz@gmail.com
-- 🐙 GitHub: [@polatcangurbuz](https://github.com/polatcangurbuz)
+- 📧 E-posta: polatcangurbuz@gmail.com / msargin1986@gmail.com
+- 🐙 GitHub: [@polatcangurbuz](https://github.com/polatcangurbuz) / [@metehansargin](https://github.com/metehansargin)
 
 ---
 
