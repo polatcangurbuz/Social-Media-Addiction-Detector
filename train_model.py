@@ -22,10 +22,10 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # ─────────────────────────────────────────
 # NLP Hyperparametreleri 
 # ─────────────────────────────────────────
-MAX_SEQ_LEN = 30
-VOCAB_SIZE  = 2500
-EMBED_DIM   = 32      
-LSTM_UNITS  = 16     
+MAX_SEQ_LEN = 30  # Her metin maksimum 30 token
+VOCAB_SIZE  = 2500 # En sık 2500 kelime
+EMBED_DIM   = 32    # Her kelime 32 boyutlu vektörle temsil edilir
+LSTM_UNITS  = 16    # LSTM hücre sayısı  
 TEXT_DROPOUT_RATE = 0.30   # eğitim verisinin %30'u text-sıfırlanmış
 TAB_NOISE_STD = 0.04       # tabular feature noise (regularization)
 
@@ -33,7 +33,7 @@ TAB_NOISE_STD = 0.04       # tabular feature noise (regularization)
 # DUYGU TABANLI METİN ŞABLONLARI 
 # ─────────────────────────────────────────
 EMOTION_TEMPLATES = {
-    'positive': [
+    'positive': [ # olumlu duygu şablonları
         "Bu hafta kendimi enerjik hissettim ve dinç uyandım",
         "Hafta sonu doğa yürüyüşü yaptım çok keyifliydi",
         "Telefonsuz vakit geçirmek bana iyi geliyor",
@@ -60,7 +60,7 @@ EMOTION_TEMPLATES = {
         "Sınırları korumakta zorlanabiliyorum",
         "Az da olsa yorgun hissettiğim günler var",
     ],
-    'distress': [
+    'distress': [ # sıkıntılı duygu şablonları
         "Telefonu elime aldığımda saatlerin geçtiğini fark etmiyorum",
         "Sürekli bildirimleri ve mesajları kontrol ediyorum",
         "Kendimi başkalarıyla karşılaştırıyorum kötü hissediyorum",
@@ -74,7 +74,7 @@ EMOTION_TEMPLATES = {
         "FOMO hissediyorum bir şey kaçırıyorum gibi",
         "Sürekli kaygılıyım dinlenemiyorum kafam dağınık",
     ],
-    'severe': [
+    'severe': [ # ciddi sıkıntılı duygu şablonları
         "Hayattan zevk almıyorum sürekli telefondayım",
         "Bütün gece scroll ediyorum uyuyamıyorum",
         "Kendimi değersiz ve yalnız hissediyorum",
@@ -87,7 +87,7 @@ EMOTION_TEMPLATES = {
         "İzole hissediyorum çok yorgunum",
         "Kendimi telefonun esiri gibi hissediyorum",
     ],
-    'neutral': [
+    'neutral': [ # nötr duygu şablonları
         "Bu hafta normal geçti bir şey değişmedi",
         "Olağan bir hafta yaşadım söyleyecek bir şey yok",
         "İşler yolunda gidiyor genel olarak",
@@ -169,7 +169,7 @@ def compute_addiction_score(df):
         sleep_mental    * 0.03
     )
 
-    # v3: daha fazla noise → daha gerçekçi
+    
     noise = np.random.RandomState(42).normal(0, 0.06, len(raw))
     return np.clip(raw + noise, 0, 1)
 
@@ -240,7 +240,7 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     print("\n📋 Addiction score dağılımı:")
     print(df['addiction_score'].value_counts().sort_index())
 
-    # 2. OLASILIKSAL metin üret (artık seviyeye bire bir bağlı değil)
+    # 2. OLASILIKSAL metin üretme
     print("\n📝 Olasılıksal metin verisi üretiliyor (v3: emotion-based)...")
     rng = np.random.default_rng(42)
     df['user_text'] = df['addiction_score'].apply(
