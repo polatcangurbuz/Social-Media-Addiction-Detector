@@ -1,24 +1,3 @@
-"""
-Sosyal Medya Bağımlılık Dedektörü — Model Eğitim Pipeline'ı (v3)
-================================================================
-v3 DÜZELTMELERİ (v2'deki veri sızıntısını giderir):
-
-  🔧 OLASILIKSAL DUYGU EŞLEMESİ — metin artık seviyeye bire bir bağlı değil.
-     Seviye 1 kullanıcı %15 ihtimalle "endişeli" yazabilir, seviye 5 kullanıcı
-     %5 ihtimalle "nötr" yazabilir. Bu LSTM'in ezberlemesini engeller.
-
-  🔧 TEXT DROPOUT AUGMENTATION — eğitim verisinin %30'unda metin sıfırlanmış.
-     Model "metin olmadan da tabular ile karar ver" davranışını öğreniyor.
-
-  🔧 KÜÇÜLTÜLMÜŞ + REGULARIZED TEXT BRANCH — LSTM(16) + Embedding(32) + Dropout(0.5).
-     Tabular branch'i baskın hâle getirir, LSTM yardımcı sinyale dönüşür.
-
-  🔧 LABEL ENCODING (one-hot YOK) — kategorik kolonlar tek kolonda kalır,
-     arayüzde Türkçe dropdown olarak görünür.
-
-Çalıştırma: python train_model.py
-"""
-
 import numpy as np
 import pandas as pd
 import os
@@ -41,18 +20,17 @@ OUTPUT_DIR = '/kaggle/working' if os.path.exists('/kaggle/working') else '.'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ─────────────────────────────────────────
-# NLP Hyperparametreleri (v3 — küçültüldü)
+# NLP Hyperparametreleri 
 # ─────────────────────────────────────────
 MAX_SEQ_LEN = 30
 VOCAB_SIZE  = 2500
-EMBED_DIM   = 32      # ↓ 64'ten 32'ye
-LSTM_UNITS  = 16      # ↓ 32'den 16'ya
+EMBED_DIM   = 32      
+LSTM_UNITS  = 16     
 TEXT_DROPOUT_RATE = 0.30   # eğitim verisinin %30'u text-sıfırlanmış
 TAB_NOISE_STD = 0.04       # tabular feature noise (regularization)
 
 # ─────────────────────────────────────────
-# DUYGU TABANLI METİN ŞABLONLARI (v3)
-# Artık seviyeye değil, duyguya göre gruplanmış
+# DUYGU TABANLI METİN ŞABLONLARI 
 # ─────────────────────────────────────────
 EMOTION_TEMPLATES = {
     'positive': [
@@ -285,7 +263,7 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
         if col in df.columns:
             df = df.drop(columns=[col])
 
-    # 5. KATEGORİKLER LABEL ENCODE (v3: one-hot YOK)
+    # 5. KATEGORİKLER LABEL ENCODE 
     # Tüm string kolonlar tek kolonda kalır → arayüzde Türkçe dropdown
     label_encoders = {}
     for col in df.select_dtypes(include='object').columns:
@@ -323,7 +301,7 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     X_train_tab = scaler.fit_transform(X_train_tab_raw)
     X_test_tab  = scaler.transform(X_test_tab_raw)
 
-    # 10. TEXT DROPOUT AUGMENTATION (v3 yenilik)
+    # 10. TEXT DROPOUT AUGMENTATION 
     # Eğitim verisinin %30'unu kopyala ama metnini sıfırla
     n_aug = int(len(X_train_tab) * TEXT_DROPOUT_RATE)
     aug_idx = np.random.RandomState(7).choice(len(X_train_tab), n_aug, replace=False)
@@ -373,14 +351,14 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     }
 
 # ─────────────────────────────────────────
-# MULTI-MODAL MODEL (v3 — küçültüldü + güçlü regularization)
+# MULTI-MODAL MODEL
 # ─────────────────────────────────────────
 def build_model(tab_input_dim, num_classes=5):
-    L2 = tf.keras.regularizers.l2(1e-3)   # ↑ 1e-4'ten 1e-3'e
+    L2 = tf.keras.regularizers.l2(1e-3)  
 
     # ── TABULAR BRANCH (baskın) ──
     tab_in = layers.Input(shape=(tab_input_dim,), name='tabular_input')
-    t = layers.GaussianNoise(TAB_NOISE_STD, name='tab_noise')(tab_in)  # eğitim sırasında noise
+    t = layers.GaussianNoise(TAB_NOISE_STD, name='tab_noise')(tab_in)  
     t = layers.Dense(64, kernel_regularizer=L2, name='tab_dense_1')(t)
     t = layers.BatchNormalization(name='tab_bn_1')(t)
     t = layers.Activation('relu', name='tab_relu_1')(t)
@@ -391,7 +369,7 @@ def build_model(tab_input_dim, num_classes=5):
     t = layers.Activation('relu', name='tab_relu_2')(t)
     t = layers.Dropout(0.4, name='tab_drop_2')(t)
 
-    # ── TEXT BRANCH (yardımcı - küçültüldü) ──
+    # ── TEXT BRANCH ──
     text_in = layers.Input(shape=(MAX_SEQ_LEN,), name='text_input', dtype='int32')
     e = layers.Embedding(VOCAB_SIZE, EMBED_DIM, mask_zero=True,
                           embeddings_regularizer=L2, name='embedding')(text_in)
