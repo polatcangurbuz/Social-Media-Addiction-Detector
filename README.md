@@ -295,33 +295,6 @@ Projenin v2 sürümünde sentetik metin doğrudan seviyeye eşleştirilmişti (h
 
 Beklenen sonuç: **%75-90 test accuracy** (gerçekçi), confusion matrix'te köşegen baskın ama yan hücrelerde 5-15 hata.
 
-### Hocanın istek listesi vs. proje kapsamı
-
-| İstek | Durum | Nerede |
-|:---|:---:|:---|
-| Derin öğrenme (klasik ML değil) | ✅ | TensorFlow/Keras MLP + LSTM |
-| Dense → ReLU → Dense (FC layer) | ✅ | Tabular branch ana mimarisi |
-| Ağ öğrenip çıkarımda bulunsun | ✅ | Eğitim + inference pipeline'ı |
-| Kullanıcı girdisi | ✅ | Gradio arayüzü |
-| Ruh sağlığı raporu | ✅ | Klinik şiddet sınıflandırması + öneriler |
-| LSTM | ✅ | Text branch |
-| NLP | ✅ | Tokenizer + Embedding + LSTM |
-| Transformer | ⏳ | İleride eklenebilir |
-| Autoencoder | ⏳ | İleride eklenebilir (anomali tespiti) |
-| PyTorch | ❌ | TensorFlow tercih edildi |
-
----
-
-## 🔮 İleride Yapılabilecekler
-
-- [ ] **Türkçe BERT entegrasyonu**: LSTM yerine BERTurk ile pretrained text encoder
-- [ ] **Autoencoder**: "Sağlıklı kullanıcı" reconstruction error'a göre anomali skoru
-- [ ] **Transformer attention**: Tabular özellikler arası ilişkileri TabTransformer ile modelle
-- [ ] **Zaman serisi**: Son 7 günün ekran süresi LSTM ile işlensin
-- [ ] **Model interpretability**: SHAP veya Integrated Gradients ile karar açıklaması
-- [ ] **PyTorch sürümü**: Aynı mimari PyTorch ile yeniden yazılsın
-- [ ] **Mobil arayüz**: React Native veya Flet ile mobil versiyon
-
 ---
 
 ## ⚠️ Sorumluluk Reddi
