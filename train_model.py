@@ -177,7 +177,7 @@ def compute_addiction_score(df):
 # Sentetik Veri Üretimi
 # ─────────────────────────────────────────
 def generate_synthetic_data(n=1000):
-    """v3: daha fazla varyans, %15 'atipik' örnek (sağlıklı kullanıcı yüksek ekran vb.)"""
+    """%15 'atipik' örnek (sağlıklı kullanıcı yüksek ekran vb.)"""
     np.random.seed(42)
     rng = np.random.default_rng(42)
 
@@ -217,7 +217,7 @@ def generate_synthetic_data(n=1000):
 
     df = pd.DataFrame(rows)
     df.to_csv('social_media_synthetic.csv', index=False)
-    print(f"✅ {n} satırlık sentetik veri üretildi (15% atipik, daha yüksek varyans)")
+    print(f"{n} satırlık sentetik veri üretildi (15% atipik, daha yüksek varyans)")
     return df
 
 # ─────────────────────────────────────────
@@ -225,11 +225,11 @@ def generate_synthetic_data(n=1000):
 # ─────────────────────────────────────────
 def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/social-media-and-mental-health/social_media_mental_health.csv'):
     if not os.path.exists(csv_path):
-        print("📊 Kaggle CSV bulunamadı, sentetik veri üretiliyor...")
+        print("Kaggle CSV bulunamadı, sentetik veri üretiliyor...")
         df = generate_synthetic_data()
     else:
         df = pd.read_csv(csv_path)
-        print(f"✅ Veri yüklendi: {df.shape}")
+        print(f"Veri yüklendi: {df.shape}")
 
     # 1. Bağımlılık skoru
     df['addiction_score_raw'] = compute_addiction_score(df)
@@ -237,11 +237,11 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
         df['addiction_score_raw'], 5, labels=[1, 2, 3, 4, 5]
     ).astype(int)
 
-    print("\n📋 Addiction score dağılımı:")
+    print("\nAddiction score dağılımı:")
     print(df['addiction_score'].value_counts().sort_index())
 
     # 2. OLASILIKSAL metin üretme
-    print("\n📝 Olasılıksal metin verisi üretiliyor (v3: emotion-based)...")
+    print("\nOlasılıksal metin verisi üretiliyor (emotion-based)...")
     rng = np.random.default_rng(42)
     df['user_text'] = df['addiction_score'].apply(
         lambda lvl: generate_text_for_level(int(lvl), rng)
@@ -270,7 +270,7 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
         le = LabelEncoder()
         df[col] = le.fit_transform(df[col].astype(str))
         label_encoders[col] = le
-        print(f"   📋 {col}: {list(le.classes_)}")
+        print(f"   {col}: {list(le.classes_)}")
 
     # 6. Feature/target ayır
     target_col = 'addiction_score'
@@ -283,7 +283,7 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     tokenizer.fit_on_texts(texts)
     sequences = tokenizer.texts_to_sequences(texts)
     X_text = pad_sequences(sequences, maxlen=MAX_SEQ_LEN, padding='post', truncating='post')
-    print(f"\n📝 Vocabulary size: {len(tokenizer.word_index)}")
+    print(f"\nVocabulary size: {len(tokenizer.word_index)}")
 
     # 8. Train/test split
     indices = np.arange(len(y))
@@ -317,10 +317,10 @@ def load_and_preprocess(csv_path='/kaggle/input/datasets/bertnardomariouskono/so
     X_train_text_aug = X_train_text_aug[perm]
     y_train_aug      = y_train_aug[perm]
 
-    print(f"\n📐 Tabular özellik sayısı: {X_tab.shape[1]}")
-    print(f"🎓 Train (orijinal): {len(y_train)}")
-    print(f"🎓 Train (+ %{int(TEXT_DROPOUT_RATE*100)} text-dropout aug): {len(y_train_aug)}")
-    print(f"🧪 Test: {len(y_test)}")
+    print(f"\nTabular özellik sayısı: {X_tab.shape[1]}")
+    print(f"Train (orijinal): {len(y_train)}")
+    print(f"Train (+ %{int(TEXT_DROPOUT_RATE*100)} text-dropout aug): {len(y_train_aug)}")
+    print(f"Test: {len(y_test)}")
 
     # 11. Artifacts kaydet
     with open(f'{OUTPUT_DIR}/scaler.pkl', 'wb') as f:
@@ -400,7 +400,7 @@ def train(model, data, epochs=80):
         'balanced', classes=np.unique(data['y_train']), y=data['y_train']
     )
     class_weight_dict = dict(enumerate(class_weights))
-    print(f"\n📊 Class weights: {class_weight_dict}")
+    print(f"\nClass weights: {class_weight_dict}")
 
     cb_list = [
         callbacks.EarlyStopping(monitor='val_loss', patience=15,
@@ -432,22 +432,22 @@ def evaluate_and_plot(model, history, data):
     y_test      = data['y_test']
 
     loss, acc = model.evaluate([X_test_tab, X_test_text], y_test, verbose=0)
-    print(f"\n🎯 Test Accuracy: {acc:.4f} ({acc*100:.1f}%)")
-    print(f"📉 Test Loss: {loss:.4f}")
+    print(f"\nTest Accuracy: {acc:.4f} ({acc*100:.1f}%)")
+    print(f"Test Loss: {loss:.4f}")
 
     if acc > 0.97:
-        print("\n⚠️  UYARI: Test accuracy %97'den yüksek — hâlâ overfitting olabilir.")
+        print("\nUYARI: Test accuracy %97'den yüksek — hâlâ overfitting olabilir.")
         print("   Beklenen: %75-90 arası gerçekçi sonuç.")
     elif acc < 0.55:
-        print("\n⚠️  UYARI: Test accuracy çok düşük — model yeterince öğrenememiş olabilir.")
+        print("\nUYARI: Test accuracy çok düşük — model yeterince öğrenememiş olabilir.")
 
     y_pred = np.argmax(model.predict([X_test_tab, X_test_text], verbose=0), axis=1)
     labels = ['Sağlıklı', 'Dikkatli', 'Risk', 'Bağımlılık Başlıyor', 'Ciddi Bağımlılık']
-    print("\n📊 Sınıflandırma Raporu:")
+    print("\nSınıflandırma Raporu:")
     print(classification_report(y_test, y_pred, target_names=labels))
 
     # Branch ablation
-    print("🔬 Branch Ablation Testi:")
+    print("Branch Ablation Testi:")
     zero_text = np.zeros_like(X_test_text)
     _, acc_no_text = model.evaluate([X_test_tab, zero_text], y_test, verbose=0)
     zero_tab = np.zeros_like(X_test_tab)
@@ -491,12 +491,12 @@ def evaluate_and_plot(model, history, data):
     axes[2].set_title('Confusion Matrix', color='white', fontsize=13, pad=10)
     axes[2].set_xlabel('Tahmin', color='#aaaacc'); axes[2].set_ylabel('Gerçek', color='#aaaacc')
 
-    plt.suptitle('Sosyal Medya Bağımlılık Dedektörü v3 — Multi-modal (MLP + LSTM)',
+    plt.suptitle('Sosyal Medya Bağımlılık Dedektörü — Multi-modal (MLP + LSTM)',
                  color='white', fontsize=15, y=1.02)
     plt.tight_layout()
     plt.savefig(f'{OUTPUT_DIR}/training_results.png', dpi=150, bbox_inches='tight',
                 facecolor='#0f0f1a', edgecolor='none')
-    print("\n📈 Grafik kaydedildi → training_results.png")
+    print("\nGrafik kaydedildi → training_results.png")
     return acc
 
 # ─────────────────────────────────────────
@@ -504,26 +504,26 @@ def evaluate_and_plot(model, history, data):
 # ─────────────────────────────────────────
 if __name__ == '__main__':
     print("=" * 60)
-    print("  Sosyal Medya Bağımlılık Dedektörü v3")
+    print("  Sosyal Medya Bağımlılık Dedektörü")
     print("  (data leakage düzeltmesi + güçlü regularization)")
     print("=" * 60)
 
     data = load_and_preprocess()
     model = build_model(data['tab_input_dim'])
-    print("\n📐 MODEL ÖZET:")
+    print("\nMODEL ÖZET:")
     model.summary()
 
-    print("\n🚀 Eğitim başlıyor...")
+    print("\nEğitim başlıyor...")
     history = train(model, data, epochs=80)
 
     acc = evaluate_and_plot(model, history, data)
 
     model.save(f'{OUTPUT_DIR}/addiction_model.keras')
-    print(f"💾 Model kaydedildi → {OUTPUT_DIR}/addiction_model.keras")
+    print(f"Model kaydedildi → {OUTPUT_DIR}/addiction_model.keras")
 
     # Demo
     print("\n" + "═" * 60)
-    print("  🎮 DEMO TEST")
+    print("  DEMO TEST")
     print("═" * 60)
     idx = np.random.randint(0, len(data['y_test']))
     sample_tab  = data['X_test_tab'][idx:idx+1]
@@ -536,15 +536,15 @@ if __name__ == '__main__':
     probs = model.predict([sample_tab, sample_text], verbose=0)[0]
     pred_level = int(np.argmax(probs)) + 1
 
-    print(f"\n💬 Kullanıcı metni: \"{decoded_text}\"")
-    print(f"🎯 Gerçek Seviye: {true_level}")
-    print(f"🤖 Tahmin:        {pred_level}")
-    print(f"📌 Sonuç:         {'✅ DOĞRU' if pred_level == true_level else '❌ YANLIŞ'}")
+    print(f"\nKullanıcı metni: \"{decoded_text}\"")
+    print(f"Gerçek Seviye: {true_level}")
+    print(f"Tahmin:        {pred_level}")
+    print(f"Sonuç:         {'DOGRU' if pred_level == true_level else 'YANLIS'}")
 
-    print("\n📊 Olasılık Dağılımı:")
+    print("\nOlasılık Dağılımı:")
     levels = ['Sağlıklı', 'Dikkatli', 'Risk', 'Bağımlılık Başlıyor', 'Ciddi Bağımlılık']
     for lvl, p in zip(levels, probs):
         bar = '█' * int(p * 30)
         print(f"  {lvl:22s} {bar:<30} {p:>6.1%}")
 
-    print(f"\n✅ Eğitim tamamlandı! Test accuracy: {acc*100:.1f}%")
+    print(f"\nEğitim tamamlandı! Test accuracy: {acc*100:.1f}%")
