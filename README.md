@@ -287,7 +287,7 @@ Projenin v2 sürümünde sentetik metin doğrudan seviyeye eşleştirilmişti (h
 
 **Sebep**: LSTM Türkçeyi öğrenmiyordu, sadece "şu kelime kombinasyonu → şu seviye" eşlemesini ezberliyordu.
 
-**Çözüm (v3)**:
+**Çözüm**:
 1. Olasılıksal duygu eşlemesi (seviye 1 kullanıcı %15 olasılıkla endişeli yazabilir)
 2. %30 text dropout augmentation
 3. Küçültülmüş + güçlü regularize edilmiş text branch
